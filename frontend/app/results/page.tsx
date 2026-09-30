@@ -1,200 +1,202 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { motion } from "framer-motion";
-import { useRouter } from "next/navigation";
-import TravelPlanDisplay from "@/components/results/TravelPlanDisplay";
-import { Button } from "@/components/ui/button";
-import { ArrowLeft, Download, Loader2, Share2, Calendar } from "lucide-react";
+import { Suspense, useEffect, useState } from "react";
+import Image from "next/image";
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
+import { ArrowLeft, CalendarPlus, Check, Loader2, Printer, Share2 } from "lucide-react";
+import TravelPlanDisplay from "@/components/results/TravelPlanDisplay";
+import { getTravelPlan } from "@/lib/api";
+import { downloadIcs } from "@/lib/calendar";
+import { fetchDestinationImage, type DestinationImage } from "@/lib/destinationImage";
+import { formatDate } from "@/lib/format";
+import { cachePlan, getCachedPlan } from "@/lib/planCache";
+import { cn } from "@/lib/utils";
+import type { TravelPlan } from "@/lib/types";
 
 export default function ResultsPage() {
-  const [plan, setPlan] = useState<any>(null);
-  const [isExporting, setIsExporting] = useState(false);
-  const router = useRouter();
+  return (
+    <Suspense fallback={<LoadingState />}>
+      <Results />
+    </Suspense>
+  );
+}
+
+function Results() {
+  const id = useSearchParams().get("id");
+  const [plan, setPlan] = useState<TravelPlan | null>(null);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    const storedPlan = sessionStorage.getItem("travelPlan");
-    if (storedPlan) {
-      try {
-        setPlan(JSON.parse(storedPlan));
-      } catch (error) {
-        console.error("Failed to parse travel plan:", error);
-        router.push("/plan");
-      }
-    } else {
-      router.push("/plan");
+    setError(null);
+    if (!id) {
+      setError("No plan selected.");
+      return;
     }
-  }, [router]);
-
-  const handleExportPDF = async () => {
-    if (!plan) return;
-
-    setIsExporting(true);
-    try {
-      // Use browser's native print functionality
-      // Users can save as PDF through print dialog
-      setTimeout(() => {
-        window.print();
-        setIsExporting(false);
-      }, 100); // Small delay to show loading state
-    } catch (error: any) {
-      console.error("Export error:", error);
-      alert("Failed to export PDF. Please try again or use your browser's print function (Ctrl+P).");
-      setIsExporting(false);
+    const cached = getCachedPlan(id);
+    if (cached) {
+      setPlan(cached);
+      return;
     }
-  };
+    const controller = new AbortController();
+    getTravelPlan(id, controller.signal)
+      .then((fetched) => {
+        cachePlan(fetched);
+        setPlan(fetched);
+      })
+      .catch((err) => {
+        if (controller.signal.aborted) return;
+        setError(err instanceof Error ? err.message : "Could not load this plan.");
+      });
+    return () => controller.abort();
+  }, [id]);
 
-  const handleShare = async () => {
-    if (!plan) return;
-
-    try {
-      if (navigator.share) {
-        await navigator.share({
-          title: `Travel Plan to ${plan.destination || 'destination'}`,
-          text: `Check out my travel plan to ${plan.destination || 'destination'}!`,
-          url: window.location.href,
-        });
-      } else {
-        // Fallback: Copy to clipboard
-        await navigator.clipboard.writeText(window.location.href);
-        alert("Link copied to clipboard!");
-      }
-    } catch (error) {
-      console.error("Share error:", error);
-    }
-  };
-
-  if (!plan) {
+  if (error) {
     return (
-      <div className="min-h-screen flex items-center justify-center">
-        <div className="text-center">
-          <Loader2 className="w-12 h-12 animate-spin mx-auto mb-4 text-purple-500" />
-          <p className="text-muted-foreground">Loading your travel plan...</p>
-        </div>
+      <div className="container py-24 max-w-xl text-center">
+        <p className="eyebrow">Plan unavailable</p>
+        <h1 className="mt-4 text-4xl text-ink">We couldn&apos;t find that trip.</h1>
+        <p className="mt-4 text-ink-soft">{error}</p>
+        <Link href="/plan" className="mt-8 inline-block rounded-full bg-ink px-6 py-3 text-paper hover:bg-terracotta">
+          Plan a new trip
+        </Link>
       </div>
     );
   }
 
+  if (!plan) return <LoadingState />;
+
   return (
-    <div className="min-h-screen pt-24 pb-16 relative overflow-hidden">
-      {/* Enhanced Background */}
-      <div className="absolute inset-0 bg-gradient-to-br from-purple-50 via-pink-50 to-blue-50 dark:from-gray-900 dark:via-purple-900/20 dark:to-blue-900/20" />
-      <div className="absolute inset-0 bg-[url('data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iNjAiIGhlaWdodD0iNjAiIHZpZXdCb3g9IjAgMCA2MCA2MCIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48ZyBmaWxsPSJub25lIiBmaWxsLXJ1bGU9ImV2ZW5vZGQiPjxwYXRoIGQ9Ik0zNiAxOGMyMCAwIDM2IDE2IDM2IDM2cy0xNiAzNi0zNiAzNi0zNi0xNi0zNi0zNiAxNi0zNiAzNi0zNnoiIHN0cm9rZT0iIzhCNUNGNiIgc3Ryb2tlLXdpZHRoPSIuNSIgb3BhY2l0eT0iLjA1Ii8+PC9nPjwvc3ZnPg==')] opacity-30" />
-      
-      <div className="container relative z-10 mx-auto px-4">
-        <motion.div
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          className="mb-12"
-        >
-          <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-6 mb-8">
-            <div className="flex-1">
-              <motion.div
-                initial={{ opacity: 0, scale: 0.9 }}
-                animate={{ opacity: 1, scale: 1 }}
-                transition={{ delay: 0.2 }}
-                className="inline-block mb-3"
-              >
-                <span className="text-purple-600 dark:text-purple-400 font-bold text-sm tracking-widest uppercase">
-                  Your Journey
-                </span>
-              </motion.div>
-              <h1 className="text-4xl md:text-5xl lg:text-6xl font-extrabold mb-3 leading-tight">
-                Your <span className="gradient-text">Perfect Trip</span> Awaits!
-              </h1>
-              <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3 sm:gap-6">
-                <p className="text-base md:text-lg text-muted-foreground flex items-center gap-2">
-                  <span className="inline-block w-2 h-2 bg-green-500 rounded-full animate-pulse"></span>
-                  Created by 6 AI agents working in harmony
-                </p>
-                {plan.generated_at && (
-                  <p className="text-sm text-muted-foreground flex items-center gap-2">
-                    <Calendar className="w-4 h-4" />
-                    {new Date(plan.generated_at).toLocaleDateString('en-US', {
-                      month: 'short',
-                      day: 'numeric',
-                      year: 'numeric',
-                      hour: '2-digit',
-                      minute: '2-digit'
-                    })}
-                  </p>
-                )}
-              </div>
-            </div>
+    <>
+      <PlanHero plan={plan} />
+      <TravelPlanDisplay plan={plan} />
+    </>
+  );
+}
 
-            <div className="flex flex-wrap gap-3 no-print">
-              <Link href="/plan">
-                <Button 
-                  variant="outline" 
-                  className="gap-2 h-11 px-5 border-2 hover:border-purple-400 rounded-xl font-semibold transition-all"
-                >
-                  <ArrowLeft className="w-4 h-4" />
-                  New Plan
-                </Button>
-              </Link>
-              
-              <Button 
-                onClick={handleShare}
-                variant="outline"
-                className="gap-2 h-11 px-5 border-2 hover:border-blue-400 rounded-xl font-semibold transition-all"
-              >
-                <Share2 className="w-4 h-4" />
-                Share
-              </Button>
+function PlanHero({ plan }: { plan: TravelPlan }) {
+  const { trip } = plan;
+  const [image, setImage] = useState<DestinationImage | null>(null);
+  const [shareState, setShareState] = useState<"idle" | "copied" | "failed">("idle");
 
-              <Button 
-                onClick={handleExportPDF}
-                disabled={isExporting}
-                className="gap-2 h-11 px-5 bg-gradient-to-r from-purple-500 to-pink-600 hover:from-purple-600 hover:to-pink-700 rounded-xl font-bold shadow-lg hover:shadow-xl transition-all disabled:opacity-50"
-              >
-                {isExporting ? (
-                  <>
-                    <Loader2 className="w-4 h-4 animate-spin" />
-                    Exporting...
-                  </>
-                ) : (
-                  <>
-                    <Download className="w-4 h-4" />
-                    Export PDF
-                  </>
-                )}
-              </Button>
-            </div>
-          </div>
+  useEffect(() => {
+    const controller = new AbortController();
+    setImage(null);
+    fetchDestinationImage(trip.destination, controller.signal).then(setImage);
+    return () => controller.abort();
+  }, [trip.destination]);
 
-          {/* Trip Summary Card */}
-          {plan.query && (
-            <motion.div
-              initial={{ opacity: 0, y: 10 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ delay: 0.3 }}
-              className="glass-card p-6 rounded-2xl mb-8 border-2 border-purple-200/20"
-            >
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                <div>
-                  <p className="text-sm text-muted-foreground mb-1">Destination</p>
-                  <p className="font-bold text-lg">{plan.query.destination || plan.destination}</p>
-                </div>
-                <div>
-                  <p className="text-sm text-muted-foreground mb-1">Duration</p>
-                  <p className="font-bold text-lg">{plan.query.duration || plan.duration} days</p>
-                </div>
-                <div>
-                  <p className="text-sm text-muted-foreground mb-1">Budget</p>
-                  <p className="font-bold text-lg">${plan.query.budget || plan.budget}</p>
-                </div>
-                <div>
-                  <p className="text-sm text-muted-foreground mb-1">Travelers</p>
-                  <p className="font-bold text-lg">{plan.query.travelers || plan.travelers} {(plan.query.travelers || plan.travelers) === 1 ? 'person' : 'people'}</p>
-                </div>
-              </div>
-            </motion.div>
-          )}
-        </motion.div>
+  const handleShare = async () => {
+    const url = window.location.href;
+    try {
+      if (navigator.share) {
+        await navigator.share({ title: `Trip to ${trip.destination}`, url });
+        return;
+      }
+      await navigator.clipboard.writeText(url);
+      setShareState("copied");
+    } catch (err) {
+      // The user closing the share sheet is not an error.
+      if (err instanceof DOMException && err.name === "AbortError") return;
+      setShareState("failed");
+    }
+    setTimeout(() => setShareState("idle"), 2500);
+  };
 
-        <TravelPlanDisplay plan={plan} />
+  const dates = `${formatDate(trip.start_date, { month: "long", day: "numeric" })} – ${formatDate(trip.end_date, {
+    month: "long",
+    day: "numeric",
+    year: "numeric",
+  })}`;
+
+  return (
+    <header className="relative">
+      <div className={cn("relative h-[58vh] min-h-[380px] max-h-[640px] overflow-hidden print:h-auto print:min-h-0", !image && "bg-teal-dark")}>
+        {image && (
+          <Image
+            src={image.url}
+            alt={`${trip.destination}`}
+            fill
+            priority
+            sizes="100vw"
+            className="object-cover animate-in fade-in duration-700 print:hidden"
+          />
+        )}
+        <div className="absolute inset-0 bg-gradient-to-t from-ink/85 via-ink/30 to-ink/10 print:hidden" aria-hidden />
+
+        <div className="relative z-10 flex h-full flex-col justify-end container pb-10 text-paper print:text-ink print:pb-4">
+          <p className="eyebrow text-ochre print:text-terracotta">
+            Your itinerary{plan.version > 1 ? ` · version ${plan.version}` : ""}
+          </p>
+          <h1 className="mt-3 text-5xl sm:text-6xl lg:text-8xl leading-[0.95] drop-shadow-sm">{trip.destination}</h1>
+          <p className="mt-4 text-lg text-paper/85 print:text-ink-soft">
+            {dates}
+            {trip.origin && <> · from {trip.origin}</>}
+          </p>
+        </div>
+
+        {image && (
+          <a
+            href={image.pageUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="absolute bottom-3 right-4 z-10 text-[10px] text-paper/60 hover:text-paper print:hidden"
+          >
+            Photo: Wikipedia
+          </a>
+        )}
       </div>
+
+      <div className="container flex flex-wrap items-center gap-2 border-b border-rule py-4 print:hidden">
+        <ActionLink href="/plan" icon={<ArrowLeft className="h-4 w-4" aria-hidden />}>
+          New trip
+        </ActionLink>
+        <span className="flex-1" />
+        <ActionButton onClick={handleShare} icon={shareState === "copied" ? <Check className="h-4 w-4" aria-hidden /> : <Share2 className="h-4 w-4" aria-hidden />}>
+          {shareState === "copied" ? "Link copied" : shareState === "failed" ? "Copy failed" : "Share"}
+        </ActionButton>
+        {plan.itinerary && (
+          <ActionButton onClick={() => downloadIcs(plan)} icon={<CalendarPlus className="h-4 w-4" aria-hidden />}>
+            Add to calendar
+          </ActionButton>
+        )}
+        <ActionButton onClick={() => window.print()} icon={<Printer className="h-4 w-4" aria-hidden />}>
+          Print / PDF
+        </ActionButton>
+        <a href="#refine" className="rounded-full bg-terracotta px-4 py-2 text-sm text-paper hover:bg-terracotta-dark transition-colors">
+          Request changes
+        </a>
+      </div>
+    </header>
+  );
+}
+
+const actionClass =
+  "inline-flex items-center gap-2 rounded-full border border-rule px-4 py-2 text-sm text-ink-soft hover:border-ink hover:text-ink transition-colors";
+
+function ActionButton({ onClick, icon, children }: { onClick: () => void; icon: React.ReactNode; children: React.ReactNode }) {
+  return (
+    <button type="button" onClick={onClick} className={actionClass}>
+      {icon}
+      {children}
+    </button>
+  );
+}
+
+function ActionLink({ href, icon, children }: { href: string; icon: React.ReactNode; children: React.ReactNode }) {
+  return (
+    <Link href={href} className={cn(actionClass, "border-transparent px-0 hover:border-transparent")}>
+      {icon}
+      {children}
+    </Link>
+  );
+}
+
+function LoadingState() {
+  return (
+    <div className="container flex min-h-[60vh] flex-col items-center justify-center text-center">
+      <Loader2 className="h-8 w-8 animate-spin text-terracotta" aria-hidden />
+      <p className="mt-4 font-serif text-xl italic text-ink-soft">Opening your itinerary…</p>
     </div>
   );
 }

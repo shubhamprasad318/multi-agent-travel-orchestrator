@@ -1,120 +1,86 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
-import { motion, useScroll, useMotionValueEvent } from "framer-motion";
-import { Plane, Menu, X } from "lucide-react";
-import { Button } from "@/components/ui/button";
+import { usePathname } from "next/navigation";
+import { Menu, X } from "lucide-react";
+import { cn } from "@/lib/utils";
+import { BRAND } from "@/lib/brand";
+
+const NAV_LINKS = [
+  { href: "/#agents", label: "The agents" },
+  { href: "/#how-it-works", label: "How it works" },
+  { href: "/#sample", label: "Sample itinerary" },
+];
 
 export default function Navbar() {
-  const [isScrolled, setIsScrolled] = useState(false);
-  const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
-  const { scrollY } = useScroll();
+  const [scrolled, setScrolled] = useState(false);
+  const [open, setOpen] = useState(false);
+  const pathname = usePathname();
 
-  useMotionValueEvent(scrollY, "change", (latest) => {
-    setIsScrolled(latest > 50);
-  });
+  useEffect(() => {
+    const onScroll = () => setScrolled(window.scrollY > 8);
+    onScroll();
+    window.addEventListener("scroll", onScroll, { passive: true });
+    return () => window.removeEventListener("scroll", onScroll);
+  }, []);
 
-  const navLinks = [
-    { href: "/", label: "Home" },
-    { href: "/plan", label: "Plan Trip" },
-    { href: "/#features", label: "Features" },
-    { href: "/#how-it-works", label: "How It Works" },
-  ];
+  useEffect(() => setOpen(false), [pathname]);
 
   return (
-    <motion.nav
-      initial={{ y: -100 }}
-      animate={{ y: 0 }}
-      className={`fixed top-0 left-0 right-0 z-50 transition-all duration-300 ${
-        isScrolled
-          ? "glass-dark shadow-2xl backdrop-blur-xl"
-          : "bg-transparent"
-      }`}
+    <header
+      className={cn(
+        "sticky top-0 z-50 transition-colors duration-300 print:hidden",
+        scrolled || open ? "bg-paper/95 backdrop-blur border-b border-rule" : "bg-paper border-b border-transparent"
+      )}
     >
-      <div className="container mx-auto px-4 py-4">
-        <div className="flex items-center justify-between">
-          {/* Logo */}
-          <Link href="/" className="flex items-center space-x-3 group">
-            <motion.div
-              whileHover={{ rotate: 360 }}
-              transition={{ duration: 0.5 }}
-              className="bg-gradient-to-r from-orange-500 to-amber-600 p-2.5 rounded-xl shadow-lg"
-            >
-              <Plane className="w-6 h-6 text-white" />
-            </motion.div>
-            <span className="text-xl font-bold text-white drop-shadow-lg">
-              TravelOrchestrator
-            </span>
-          </Link>
+      <nav aria-label="Main" className="container flex h-16 items-center justify-between gap-6">
+        <Link href="/" className="flex items-baseline gap-2 group">
+          <span className="font-serif text-2xl tracking-tight text-ink">{BRAND.short}</span>
+          <span className="hidden sm:inline text-[11px] uppercase tracking-eyebrow text-ink-muted group-hover:text-terracotta transition-colors">
+            travel desk
+          </span>
+        </Link>
 
-          {/* Desktop Navigation */}
-          <div className="hidden md:flex items-center space-x-8">
-            {navLinks.map((link, index) => (
-              <motion.div
-                key={link.href + '-' + link.label + '-' + index}
-                initial={{ opacity: 0, y: -20 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ delay: index * 0.1 }}
-              >
-                <Link
-                  href={link.href}
-                  className="text-sm font-semibold text-white/90 hover:text-white transition-colors relative group"
-                >
-                  {link.label}
-                  <span className="absolute -bottom-1 left-0 w-0 h-0.5 bg-gradient-to-r from-orange-400 to-amber-400 group-hover:w-full transition-all duration-300" />
-                </Link>
-              </motion.div>
-            ))}
-          </div>
-
-          {/* CTA Button */}
-          <div className="hidden md:block">
-            <Link href="/plan">
-              <Button className="bg-gradient-to-r from-orange-500 to-amber-600 hover:from-orange-600 hover:to-amber-700 text-white font-bold px-8 py-2.5 rounded-xl shadow-lg hover:shadow-glow-hover transform hover:scale-105 transition-all">
-                Start Planning
-              </Button>
+        <div className="hidden md:flex items-center gap-8">
+          {NAV_LINKS.map((link) => (
+            <Link key={link.href} href={link.href} className="text-sm text-ink-soft hover:text-terracotta transition-colors">
+              {link.label}
             </Link>
-          </div>
-
-          {/* Mobile Menu Toggle */}
-          <button
-            className="md:hidden text-white"
-            onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}
+          ))}
+          <Link
+            href="/plan"
+            aria-current={pathname === "/plan" ? "page" : undefined}
+            className="rounded-full bg-ink px-5 py-2 text-sm font-medium text-paper hover:bg-terracotta transition-colors"
           >
-            {isMobileMenuOpen ? <X size={24} /> : <Menu size={24} />}
-          </button>
+            Plan a trip
+          </Link>
         </div>
 
-        {/* Mobile Menu */}
-        <motion.div
-          initial={false}
-          animate={{
-            height: isMobileMenuOpen ? "auto" : 0,
-            opacity: isMobileMenuOpen ? 1 : 0,
-          }}
-          transition={{ duration: 0.3 }}
-          className="md:hidden overflow-hidden"
+        <button
+          type="button"
+          className="md:hidden -mr-2 p-2 text-ink"
+          onClick={() => setOpen((v) => !v)}
+          aria-label={open ? "Close menu" : "Open menu"}
+          aria-expanded={open}
+          aria-controls="mobile-menu"
         >
-          <div className="pt-4 pb-3 space-y-3">
-            {navLinks.map((link, idx) => (
-              <Link
-                key={link.href + '-' + link.label + '-mobile-' + idx}
-                href={link.href}
-                className="block text-white/90 hover:text-white py-2"
-                onClick={() => setIsMobileMenuOpen(false)}
-              >
-                {link.label}
-              </Link>
-            ))}
-            <Link href="/plan" onClick={() => setIsMobileMenuOpen(false)}>
-              <Button className="w-full bg-gradient-to-r from-orange-500 to-amber-600 hover:from-orange-600 hover:to-amber-700 font-bold shadow-lg">
-                Start Planning
-              </Button>
+          {open ? <X size={22} aria-hidden /> : <Menu size={22} aria-hidden />}
+        </button>
+      </nav>
+
+      {open && (
+        <div id="mobile-menu" className="md:hidden container pb-6 pt-2 space-y-1">
+          {NAV_LINKS.map((link) => (
+            <Link key={link.href} href={link.href} className="block py-3 border-b border-rule font-serif text-xl text-ink">
+              {link.label}
             </Link>
-          </div>
-        </motion.div>
-      </div>
-    </motion.nav>
+          ))}
+          <Link href="/plan" className="mt-4 block rounded-full bg-ink px-5 py-3 text-center font-medium text-paper">
+            Plan a trip
+          </Link>
+        </div>
+      )}
+    </header>
   );
 }

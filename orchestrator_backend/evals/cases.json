@@ -1,0 +1,167 @@
+[
+  {
+    "id": "tokyo-food-couple",
+    "why": "Baseline: popular city, moderate budget, strong interests",
+    "destination": "Tokyo, Japan",
+    "origin": "San Francisco",
+    "start_offset_days": 45,
+    "days": 5,
+    "budget": 6000,
+    "travelers": 2,
+    "preferences": {"interests": ["food", "culture"], "pace": "moderate", "accommodation": "mid-range"}
+  },
+  {
+    "id": "paris-tight-solo",
+    "why": "Tight budget in an expensive city; budget adherence under pressure",
+    "destination": "Paris, France",
+    "origin": "London",
+    "start_offset_days": 30,
+    "days": 4,
+    "budget": 900,
+    "travelers": 1,
+    "preferences": {"interests": ["art", "history"], "pace": "fast", "accommodation": "budget"}
+  },
+  {
+    "id": "bali-luxury-relaxed",
+    "why": "Generous budget, relaxation, luxury tier",
+    "destination": "Bali, Indonesia",
+    "origin": "Singapore",
+    "start_offset_days": 60,
+    "days": 7,
+    "budget": 12000,
+    "travelers": 2,
+    "preferences": {"interests": ["relaxation", "beach", "nature"], "pace": "relaxed", "accommodation": "luxury"}
+  },
+  {
+    "id": "jaipur-family",
+    "why": "Non-English region, family of five (multiple rooms)",
+    "destination": "Jaipur, India",
+    "origin": "Mumbai",
+    "start_offset_days": 40,
+    "days": 4,
+    "budget": 2500,
+    "travelers": 5,
+    "preferences": {"interests": ["history", "culture", "shopping"], "pace": "moderate", "accommodation": "mid-range"}
+  },
+  {
+    "id": "reykjavik-no-origin",
+    "why": "No origin: flights must be absent; cold-weather advisories",
+    "destination": "Reykjavik, Iceland",
+    "origin": null,
+    "start_offset_days": 90,
+    "days": 6,
+    "budget": 5000,
+    "travelers": 2,
+    "preferences": {"interests": ["nature", "adventure"], "pace": "moderate", "accommodation": "mid-range"}
+  },
+  {
+    "id": "kyoto-day-trip",
+    "why": "Same-day trip: no hotels, single day",
+    "destination": "Kyoto, Japan",
+    "origin": null,
+    "start_offset_days": 20,
+    "days": 1,
+    "budget": 300,
+    "travelers": 1,
+    "preferences": {"interests": ["culture", "history"], "pace": "fast", "accommodation": "budget"}
+  },
+  {
+    "id": "marrakech-group",
+    "why": "Large group (10), Arabic/French-speaking region",
+    "destination": "Marrakech, Morocco",
+    "origin": "Madrid",
+    "start_offset_days": 50,
+    "days": 5,
+    "budget": 9000,
+    "travelers": 10,
+    "preferences": {"interests": ["food", "shopping", "culture"], "pace": "moderate", "accommodation": "budget"}
+  },
+  {
+    "id": "nyc-business-fast",
+    "why": "Short, packed city trip",
+    "destination": "New York City, USA",
+    "origin": "Chicago",
+    "start_offset_days": 25,
+    "days": 3,
+    "budget": 2500,
+    "travelers": 1,
+    "preferences": {"interests": ["art", "food", "shopping"], "pace": "fast", "accommodation": "mid-range"}
+  },
+  {
+    "id": "cusco-adventure",
+    "why": "Altitude and day trips (Machu Picchu) far from the base city",
+    "destination": "Cusco, Peru",
+    "origin": "Lima",
+    "start_offset_days": 70,
+    "days": 6,
+    "budget": 3500,
+    "travelers": 2,
+    "preferences": {"interests": ["adventure", "history", "nature"], "pace": "moderate", "accommodation": "mid-range"}
+  },
+  {
+    "id": "seoul-tech",
+    "why": "Niche interest (technology), Korean-speaking region",
+    "destination": "Seoul, South Korea",
+    "origin": "Tokyo",
+    "start_offset_days": 35,
+    "days": 4,
+    "budget": 3000,
+    "travelers": 2,
+    "preferences": {"interests": ["technology", "food"], "pace": "moderate", "accommodation": "mid-range"}
+  },
+  {
+    "id": "cape-town-long",
+    "why": "Longest trip in the set (10 days), mixed interests",
+    "destination": "Cape Town, South Africa",
+    "origin": "Johannesburg",
+    "start_offset_days": 100,
+    "days": 10,
+    "budget": 7000,
+    "travelers": 2,
+    "preferences": {"interests": ["nature", "food", "beach"], "pace": "relaxed", "accommodation": "mid-range"}
+  },
+  {
+    "id": "istanbul-no-interests",
+    "why": "No interests given: planner must choose sensible defaults",
+    "destination": "Istanbul, Turkey",
+    "origin": "Berlin",
+    "start_offset_days": 55,
+    "days": 4,
+    "budget": 2200,
+    "travelers": 2,
+    "preferences": {"interests": [], "pace": "moderate", "accommodation": "mid-range"}
+  },
+  {
+    "id": "hanoi-budget-backpacker",
+    "why": "Very low-cost destination with budget tier",
+    "destination": "Hanoi, Vietnam",
+    "origin": "Bangkok",
+    "start_offset_days": 45,
+    "days": 5,
+    "budget": 800,
+    "travelers": 1,
+    "preferences": {"interests": ["food", "adventure"], "pace": "fast", "accommodation": "budget"}
+  },
+  {
+    "id": "zurich-luxury-short",
+    "why": "Expensive city, luxury tier, short stay",
+    "destination": "Zurich, Switzerland",
+    "origin": "Paris",
+    "start_offset_days": 30,
+    "days": 2,
+    "budget": 4000,
+    "travelers": 2,
+    "preferences": {"interests": ["nature", "relaxation"], "pace": "relaxed", "accommodation": "luxury"}
+  },
+  {
+    "id": "mexico-city-soon",
+    "why": "Trip starts within the forecast horizon: exercises grounded weather",
+    "destination": "Mexico City, Mexico",
+    "origin": "Los Angeles",
+    "start_offset_days": 3,
+    "days": 4,
+    "budget": 2000,
+    "travelers": 2,
+    "preferences": {"interests": ["food", "art", "history"], "pace": "moderate", "accommodation": "mid-range"}
+  }
+]

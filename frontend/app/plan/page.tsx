@@ -1,235 +1,198 @@
 "use client";
 
-import { useState } from "react";
-import { motion } from "framer-motion";
-import { useRouter } from "next/navigation";
+import { Suspense, useEffect, useRef, useState } from "react";
+import Image from "next/image";
+import { useRouter, useSearchParams } from "next/navigation";
+import { AlertCircle } from "lucide-react";
 import PlanForm from "@/components/plan/PlanForm";
-import { Loader2, AlertCircle } from "lucide-react";
+import AgentGraph, { type NodeState } from "@/components/trace/AgentGraph";
+import TraceTimeline from "@/components/trace/TraceTimeline";
+import { createTravelPlan } from "@/lib/api";
+import { cachePlan } from "@/lib/planCache";
+import type { AgentName, ProgressEvent, TraceStep, TravelRequest } from "@/lib/types";
+
+const LAST_REQUEST_KEY = "travelPlanLastRequest";
 
 export default function PlanPage() {
+  return (
+    <Suspense>
+      <Planner />
+    </Suspense>
+  );
+}
+
+function Planner() {
+  const router = useRouter();
+  const destinationParam = useSearchParams().get("destination") ?? undefined;
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [currentStep, setCurrentStep] = useState(0);
-  const router = useRouter();
+  const [nodes, setNodes] = useState<Partial<Record<AgentName, NodeState>>>({});
+  const [steps, setSteps] = useState<TraceStep[]>([]);
+  const [elapsed, setElapsed] = useState(0);
+  const [lastRequest, setLastRequest] = useState<TravelRequest | null>(null);
+  const [destination, setDestination] = useState<string | undefined>(destinationParam);
+  const [formKey, setFormKey] = useState(0);
+  const abortRef = useRef<AbortController | null>(null);
 
-  const agentSteps = [
-    { icon: "🔍", text: "Researching destination...", duration: 15000 },
-    { icon: "🌤️", text: "Analyzing weather forecasts...", duration: 10000 },
-    { icon: "🎯", text: "Curating activities...", duration: 12000 },
-    { icon: "📅", text: "Optimizing itinerary...", duration: 20000 },
-    { icon: "✈️", text: "Finding best bookings...", duration: 15000 },
-    { icon: "✅", text: "Validating your plan...", duration: 8000 },
-  ];
+  // Restore the previous request so a failed attempt doesn't wipe the form.
+  useEffect(() => {
+    try {
+      const saved = sessionStorage.getItem(LAST_REQUEST_KEY);
+      if (saved) {
+        setLastRequest(JSON.parse(saved));
+        setFormKey((k) => k + 1);
+      }
+    } catch {
+      /* storage unavailable */
+    }
+    return () => abortRef.current?.abort();
+  }, []);
 
-  const handleSubmit = async (formData: any) => {
+  useEffect(() => {
+    if (!isLoading) return;
+    const started = Date.now();
+    const timer = setInterval(() => setElapsed(Math.floor((Date.now() - started) / 1000)), 1000);
+    return () => clearInterval(timer);
+  }, [isLoading]);
+
+  const handleProgress = (event: ProgressEvent) => {
+    const { agent, status, step } = event;
+    setNodes((prev) => ({
+      ...prev,
+      [agent]: status === "started" ? { status: "running" } : { status, step },
+      // A revision is followed by a second validation.
+      ...(agent === "revision" && status === "started" ? { validator: { status: "pending" as const } } : {}),
+    }));
+    if (step) setSteps((prev) => [...prev, step]);
+  };
+
+  const handleSubmit = async (request: TravelRequest) => {
+    setLastRequest(request);
+    setDestination(undefined);
+    try {
+      sessionStorage.setItem(LAST_REQUEST_KEY, JSON.stringify(request));
+    } catch {
+      /* storage unavailable */
+    }
     setIsLoading(true);
     setError(null);
-    setCurrentStep(0);
+    setNodes({});
+    setSteps([]);
+    setElapsed(0);
+    window.scrollTo({ top: 0 });
+    const controller = new AbortController();
+    abortRef.current = controller;
 
-    // Progress through steps
-    const stepInterval = setInterval(() => {
-      setCurrentStep((prev) => {
-        if (prev < agentSteps.length - 1) {
-          return prev + 1;
-        }
-        return prev;
-      });
-    }, 15000);
-    
     try {
-      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/v1/plan`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify(formData),
-      });
-
-      clearInterval(stepInterval);
-
-      if (response.ok) {
-        const data = await response.json();
-        
-        if (!data || typeof data !== 'object') {
-          throw new Error("Invalid response from server");
-        }
-
-        sessionStorage.setItem("travelPlan", JSON.stringify({
-          ...data,
-          generated_at: new Date().toISOString(),
-          query: formData
-        }));
-        
-        setCurrentStep(agentSteps.length - 1);
-        await new Promise(resolve => setTimeout(resolve, 1000));
-        
-        router.push("/results");
-      } else {
-        const errorData = await response.json().catch(() => ({}));
-        throw new Error(errorData.detail || `Server error: ${response.status}`);
+      const plan = await createTravelPlan(request, { onProgress: handleProgress, signal: controller.signal });
+      cachePlan(plan);
+      router.push(`/results?id=${plan.id}`);
+      // Stay in the loading state while navigating.
+      return;
+    } catch (err) {
+      if (err instanceof DOMException && err.name === "AbortError") {
+        setIsLoading(false);
+        return;
       }
-    } catch (error: any) {
-      clearInterval(stepInterval);
-      console.error("Error:", error);
-      
-      let errorMessage = "Failed to create travel plan. ";
-      
-      if (error.message.includes("Failed to fetch")) {
-        errorMessage += "Unable to reach the server. Please check your internet connection.";
-      } else if (error.message.includes("timeout")) {
-        errorMessage += "Request timed out. The server might be busy. Please try again.";
-      } else {
-        errorMessage += error.message || "Please try again.";
-      }
-      
-      setError(errorMessage);
-    } finally {
+      setError(err instanceof Error ? err.message : "Failed to create travel plan. Please try again.");
+      setFormKey((k) => k + 1);
       setIsLoading(false);
-      setCurrentStep(0);
     }
   };
 
-  return (
-    <div className="min-h-screen pt-24 pb-16 relative overflow-hidden">
-      {/* Enhanced Background */}
-      <div className="absolute inset-0 bg-gradient-to-br from-purple-50 via-pink-50 to-blue-50 dark:from-gray-900 dark:via-purple-900/20 dark:to-blue-900/20" />
-      <div className="absolute inset-0 bg-[url('data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iNjAiIGhlaWdodD0iNjAiIHZpZXdCb3g9IjAgMCA2MCA2MCIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48ZyBmaWxsPSJub25lIiBmaWxsLXJ1bGU9ImV2ZW5vZGQiPjxwYXRoIGQ9Ik0zNiAxOGMyMCAwIDM2IDE2IDM2IDM2cy0xNiAzNi0zNiAzNi0zNi0xNi0zNi0zNiAxNi0zNiAzNi0zNnoiIHN0cm9rZT0iIzhCNUNGNiIgc3Ryb2tlLXdpZHRoPSIuNSIgb3BhY2l0eT0iLjA1Ii8+PC9nPjwvc3ZnPg==')] opacity-30" />
-      
-      <div className="container relative z-10 mx-auto px-4">
-        <motion.div
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.5 }}
-          className="max-w-5xl mx-auto"
-        >
-          <div className="text-center mb-16">
-            <motion.div
-              initial={{ opacity: 0, scale: 0.9 }}
-              animate={{ opacity: 1, scale: 1 }}
-              transition={{ delay: 0.2 }}
-              className="inline-block mb-4"
-            >
-              <span className="text-purple-600 dark:text-purple-400 font-bold text-sm tracking-widest uppercase">
-                Start Your Journey
-              </span>
-            </motion.div>
-            <h1 className="text-5xl md:text-6xl lg:text-7xl font-extrabold mb-6 leading-tight">
-              Plan Your <span className="gradient-text">Perfect Trip</span>
+  if (isLoading) {
+    const latest = steps.at(-1);
+    return (
+      <div className="container py-12 md:py-16">
+        <div className="flex flex-wrap items-end justify-between gap-4 border-b-2 border-ink pb-6">
+          <div>
+            <p className="eyebrow">In progress</p>
+            <h1 className="mt-3 text-4xl md:text-5xl text-ink">
+              Your trip to <em className="italic text-terracotta">{lastRequest?.destination}</em> is being written.
             </h1>
-            <p className="text-lg md:text-xl text-muted-foreground max-w-3xl mx-auto leading-relaxed">
-              Tell us about your dream destination and let our 6 specialized AI agents create
-              the perfect itinerary tailored just for you
-            </p>
           </div>
+          <p className="font-serif text-3xl tabular-nums text-ink-muted" aria-label={`${elapsed} seconds elapsed`}>
+            {Math.floor(elapsed / 60)}:{String(elapsed % 60).padStart(2, "0")}
+          </p>
+        </div>
 
-          {/* Error Alert - Custom Design */}
-          {error && !isLoading && (
-            <motion.div
-              initial={{ opacity: 0, y: -10 }}
-              animate={{ opacity: 1, y: 0 }}
-              className="mb-8"
-            >
-              <div className="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg p-4 flex items-start gap-3">
-                <AlertCircle className="h-5 w-5 text-red-600 dark:text-red-400 flex-shrink-0 mt-0.5" />
-                <div className="flex-1">
-                  <p className="text-sm text-red-800 dark:text-red-200">{error}</p>
-                </div>
-              </div>
-            </motion.div>
-          )}
+        <div className="mt-10 overflow-x-auto">
+          <AgentGraph nodes={nodes} theme="light" className="min-w-[680px]" />
+        </div>
 
-          {isLoading ? (
-            <motion.div
-              initial={{ opacity: 0, scale: 0.95 }}
-              animate={{ opacity: 1, scale: 1 }}
-              className="glass-dark p-8 md:p-16 rounded-3xl text-center shadow-2xl border-2 border-purple-200/20"
-            >
-              <div className="relative">
-                <div className="absolute inset-0 flex items-center justify-center">
-                  <div className="w-24 h-24 bg-gradient-to-r from-purple-500 to-pink-500 rounded-full blur-2xl opacity-30 animate-pulse" />
-                </div>
-                <Loader2 className="w-16 h-16 md:w-20 md:h-20 animate-spin mx-auto mb-6 text-purple-500 relative z-10" />
-              </div>
-              
-              <h3 className="text-2xl md:text-3xl lg:text-4xl font-bold mb-3 text-white">
-                AI Agents Are Working Their Magic...
-              </h3>
-              <p className="text-white/80 text-base md:text-lg mb-8 md:mb-10">
-                This usually takes 60-90 seconds ⏱️
-              </p>
-              
-              {/* Progress bar */}
-              <div className="max-w-md mx-auto mb-8">
-                <div className="h-2 bg-white/10 rounded-full overflow-hidden">
-                  <motion.div
-                    className="h-full bg-gradient-to-r from-purple-500 to-pink-500"
-                    initial={{ width: "0%" }}
-                    animate={{ width: `${((currentStep + 1) / agentSteps.length) * 100}%` }}
-                    transition={{ duration: 0.5 }}
-                  />
-                </div>
-                <p className="text-white/60 text-sm mt-2">
-                  Step {currentStep + 1} of {agentSteps.length}
-                </p>
-              </div>
-              
-              <div className="max-w-md mx-auto space-y-3 md:space-y-4">
-                {agentSteps.map((step, i) => (
-                  <motion.div
-                    key={i}
-                    initial={{ opacity: 0, x: -20 }}
-                    animate={{ 
-                      opacity: i <= currentStep ? 1 : 0.4, 
-                      x: 0,
-                      scale: i === currentStep ? 1.02 : 1
-                    }}
-                    transition={{ 
-                      delay: i * 0.1, 
-                      duration: 0.5,
-                      scale: { duration: 0.3 }
-                    }}
-                    className={`flex items-center gap-3 md:gap-4 p-3 md:p-4 rounded-xl border transition-all ${
-                      i === currentStep 
-                        ? 'bg-white/20 border-white/30 shadow-lg' 
-                        : i < currentStep
-                        ? 'bg-white/10 border-white/10'
-                        : 'bg-white/5 border-white/5'
-                    }`}
-                  >
-                    <span className="text-xl md:text-2xl">{step.icon}</span>
-                    <span className={`font-medium text-left text-sm md:text-base ${
-                      i <= currentStep ? 'text-white' : 'text-white/50'
-                    }`}>
-                      {step.text}
-                    </span>
-                    {i < currentStep && (
-                      <span className="ml-auto text-green-400">✓</span>
-                    )}
-                    {i === currentStep && (
-                      <Loader2 className="ml-auto w-4 h-4 animate-spin text-purple-400" />
-                    )}
-                  </motion.div>
-                ))}
-              </div>
+        <p className="mt-6 font-serif text-xl italic text-ink-soft min-h-[2rem]" aria-live="polite">
+          {latest?.detail ?? "The researcher and the forecaster start together…"}
+        </p>
 
-              {/* Tips section */}
-              <motion.div
-                initial={{ opacity: 0 }}
-                animate={{ opacity: 1 }}
-                transition={{ delay: 5 }}
-                className="mt-8 p-4 bg-white/5 rounded-lg border border-white/10"
-              >
-                <p className="text-white/60 text-sm">
-                  💡 <strong className="text-white/80">Tip:</strong> Our AI is analyzing live data 
-                  from multiple sources to create the best plan for you
-                </p>
-              </motion.div>
-            </motion.div>
-          ) : (
-            <PlanForm onSubmit={handleSubmit} />
-          )}
-        </motion.div>
+        {steps.length > 0 && (
+          <div className="mt-8 border-t border-rule pt-8">
+            <p className="eyebrow text-ink-muted mb-5">The desk log</p>
+            <TraceTimeline trace={steps} />
+          </div>
+        )}
+
+        <button
+          type="button"
+          onClick={() => abortRef.current?.abort()}
+          className="mt-10 text-sm text-ink-muted link-underline"
+        >
+          Cancel
+        </button>
       </div>
+    );
+  }
+
+  return (
+    <div className="container py-12 md:py-16 grid gap-14 lg:grid-cols-[1fr_22rem] lg:gap-20">
+      <div>
+        <p className="eyebrow">New trip</p>
+        <h1 className="mt-3 text-5xl md:text-6xl text-ink">Brief the desk.</h1>
+        <p className="mt-4 max-w-xl text-lg text-ink-soft leading-relaxed">
+          The more you tell the agents, the better the plan. Everything except the destination and dates has a sensible default.
+        </p>
+
+        {error && (
+          <div role="alert" className="mt-8 flex gap-3 border-l-4 border-terracotta bg-terracotta-light/50 px-4 py-3">
+            <AlertCircle className="h-5 w-5 shrink-0 text-terracotta mt-0.5" aria-hidden />
+            <p className="text-sm text-ink">{error}</p>
+          </div>
+        )}
+
+        <div className="mt-12">
+          <PlanForm key={formKey} onSubmit={handleSubmit} initialValues={lastRequest} initialDestination={destination} />
+        </div>
+      </div>
+
+      <aside className="hidden lg:block">
+        <div className="sticky top-24">
+          <div className="relative aspect-[4/5] overflow-hidden rounded-sm">
+            <Image
+              src="/images/planning.jpg"
+              alt="A paper map with a notebook, pencil, camera and backpack"
+              fill
+              sizes="22rem"
+              className="object-cover"
+            />
+          </div>
+          <div className="mt-6 space-y-4 text-sm text-ink-soft">
+            <p className="eyebrow">What you&apos;ll get</p>
+            <ul className="space-y-2">
+              {[
+                "A day-by-day itinerary with times and costs",
+                "A map of every stop",
+                "Flight & hotel estimates with live-price links",
+                "Weather, packing list and local etiquette",
+                "A quality score, and a second draft if needed",
+              ].map((item) => (
+                <li key={item} className="flex gap-3">
+                  <span className="text-terracotta" aria-hidden>—</span>
+                  {item}
+                </li>
+              ))}
+            </ul>
+          </div>
+        </div>
+      </aside>
     </div>
   );
 }

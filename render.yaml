@@ -1,0 +1,22 @@
+# Render Blueprint: https://render.com/docs/blueprint-spec
+# New > Blueprint > select this repo. You'll be prompted for the sync:false values.
+services:
+  - type: web
+    name: travel-orchestrator-api
+    runtime: docker
+    rootDir: orchestrator_backend
+    dockerfilePath: ./Dockerfile
+    plan: free
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      - key: GOOGLE_API_KEY
+        sync: false
+      # Your Vercel URL, e.g. https://travel-orchestrator.vercel.app (comma-separate several)
+      - key: CORS_ORIGINS
+        sync: false
+      # Recommended: MongoDB Atlas free tier, so plans survive restarts.
+      - key: MONGODB_URI
+        sync: false
+      - key: GEMINI_MODEL
+        value: gemini-3.8-flash

@@ -1,18 +1,119 @@
-// lib/api.ts
-const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+import type { ProgressEvent, TravelPlan, TravelRequest } from "@/lib/types";
 
-export async function createTravelPlan(data: any) {
-  const response = await fetch(`${API_URL}/api/v1/plan`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify(data),
-  });
+const API_URL = (process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000").replace(/\/$/, "");
 
-  if (!response.ok) {
-    throw new Error('Failed to create travel plan');
+// Planning runs several LLM calls; the backend gives up at 240s.
+const PLAN_TIMEOUT_MS = 300_000;
+
+export class ApiError extends Error {
+  constructor(message: string, public status?: number) {
+    super(message);
+    this.name = "ApiError";
   }
+}
 
-  return response.json();
+async function errorFromResponse(response: Response): Promise<ApiError> {
+  const body = await response.json().catch(() => null);
+  const detail = typeof body?.detail === "string" ? body.detail : null;
+  const fallback: Record<number, string> = {
+    429: "Too many requests. Please wait a minute and try again.",
+    503: "The planner is not available right now.",
+  };
+  return new ApiError(detail || fallback[response.status] || `Server error (${response.status})`, response.status);
+}
+
+function networkError(error: unknown, signal: AbortSignal): Error {
+  if (signal.aborted) {
+    return signal.reason instanceof Error && signal.reason.name === "TimeoutError"
+      ? new ApiError("The planner took too long to respond. Please try again.")
+      : new DOMException("Aborted", "AbortError");
+  }
+  if (error instanceof ApiError) return error;
+  return new ApiError(`Can't reach the planning server at ${API_URL}. Is the backend running?`);
+}
+
+/** Create a plan, reporting per-agent progress from the SSE stream. */
+export async function createTravelPlan(
+  request: TravelRequest,
+  { onProgress, signal }: { onProgress?: (event: ProgressEvent) => void; signal?: AbortSignal } = {}
+): Promise<TravelPlan> {
+  const timeout = AbortSignal.timeout(PLAN_TIMEOUT_MS);
+  const combined = signal ? AbortSignal.any([signal, timeout]) : timeout;
+
+  try {
+    const response = await fetch(`${API_URL}/api/v1/plan/stream`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(request),
+      signal: combined,
+    });
+    if (!response.ok) throw await errorFromResponse(response);
+    if (!response.body) throw new ApiError("Empty response from server");
+
+    const reader = response.body.pipeThrough(new TextDecoderStream()).getReader();
+    let buffer = "";
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buffer += value;
+      let boundary: number;
+      while ((boundary = buffer.indexOf("\n\n")) !== -1) {
+        const block = buffer.slice(0, boundary);
+        buffer = buffer.slice(boundary + 2);
+        const event = parseSseBlock(block);
+        if (!event) continue;
+        if (event.name === "progress") onProgress?.(event.data as ProgressEvent);
+        if (event.name === "result") return event.data as TravelPlan;
+        if (event.name === "error") throw new ApiError((event.data as { detail?: string }).detail || "Planning failed");
+      }
+    }
+    throw new ApiError("The connection closed before the plan was ready. Please try again.");
+  } catch (error) {
+    throw networkError(error, combined);
+  }
+}
+
+function parseSseBlock(block: string): { name: string; data: unknown } | null {
+  let name = "message";
+  const dataLines: string[] = [];
+  for (const line of block.split("\n")) {
+    if (line.startsWith(":")) continue; // keep-alive comment
+    if (line.startsWith("event:")) name = line.slice(6).trim();
+    else if (line.startsWith("data:")) dataLines.push(line.slice(5).trimStart());
+  }
+  if (dataLines.length === 0) return null;
+  try {
+    return { name, data: JSON.parse(dataLines.join("\n")) };
+  } catch {
+    return null;
+  }
+}
+
+/** Apply a change request; the backend returns a new plan version. */
+export async function refineTravelPlan(id: string, instruction: string, signal?: AbortSignal): Promise<TravelPlan> {
+  const timeout = AbortSignal.timeout(PLAN_TIMEOUT_MS);
+  const combined = signal ? AbortSignal.any([signal, timeout]) : timeout;
+  try {
+    const response = await fetch(`${API_URL}/api/v1/plans/${encodeURIComponent(id)}/refine`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ instruction }),
+      signal: combined,
+    });
+    if (!response.ok) throw await errorFromResponse(response);
+    return (await response.json()) as TravelPlan;
+  } catch (error) {
+    throw networkError(error, combined);
+  }
+}
+
+export async function getTravelPlan(id: string, signal?: AbortSignal): Promise<TravelPlan> {
+  try {
+    const response = await fetch(`${API_URL}/api/v1/plans/${encodeURIComponent(id)}`, { signal });
+    if (!response.ok) throw await errorFromResponse(response);
+    return (await response.json()) as TravelPlan;
+  } catch (error) {
+    if (error instanceof ApiError) throw error;
+    throw networkError(error, signal ?? new AbortController().signal);
+  }
 }
