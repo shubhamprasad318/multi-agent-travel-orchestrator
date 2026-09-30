@@ -1,4 +1,4 @@
-import { formatUSD } from "@/lib/format";
+import { Price } from "@/lib/money";
 import type { BudgetBreakdown, BudgetStatus, Validation, ValidationStatus } from "@/lib/types";
 import { BulletList, LeaderRow, Section } from "./shared";
 
@@ -79,17 +79,17 @@ export default function ValidationSection({ validation, budget }: { validation: 
             <span className={`text-xs uppercase tracking-eyebrow ${BUDGET_TONE[budget.status]}`}>{budget.status}</span>
           </div>
           <div className="mt-5 space-y-3 text-[15px]">
-            <LeaderRow label="Flights" value={formatUSD(budget.flights)} />
-            <LeaderRow label="Lodging" value={formatUSD(budget.lodging)} />
-            <LeaderRow label="Activities & transport" value={formatUSD(budget.activities)} />
-            <LeaderRow label="Food" value={formatUSD(budget.food)} />
+            <LeaderRow label="Flights" value={<Price usd={budget.flights} />} />
+            <LeaderRow label="Lodging" value={<Price usd={budget.lodging} />} />
+            <LeaderRow label="Activities & transport" value={<Price usd={budget.activities} />} />
+            <LeaderRow label="Food" value={<Price usd={budget.food} />} />
           </div>
           <div className="mt-5 space-y-3 border-t-2 border-ink pt-4">
-            <LeaderRow label={<span className="font-serif text-xl">Estimated total</span>} value={<span className="font-serif text-xl text-ink">{formatUSD(budget.estimated_total)}</span>} />
-            <LeaderRow label="Your budget" value={formatUSD(budget.total_budget)} />
+            <LeaderRow label={<span className="font-serif text-xl">Estimated total</span>} value={<Price usd={budget.estimated_total} className="font-serif text-xl text-ink" localClassName="font-sans" />} />
+            <LeaderRow label="Your budget" value={<Price usd={budget.total_budget} />} />
             <LeaderRow
               label={budget.remaining < 0 ? "Over by" : "Left over"}
-              value={<span className={budget.remaining < 0 ? "text-terracotta" : "text-teal"}>{formatUSD(Math.abs(budget.remaining))}</span>}
+              value={<Price usd={Math.abs(budget.remaining)} className={budget.remaining < 0 ? "text-terracotta" : "text-teal"} />}
             />
           </div>
         </div>

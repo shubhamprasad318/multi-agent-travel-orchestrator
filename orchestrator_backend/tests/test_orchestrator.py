@@ -188,3 +188,42 @@ async def test_implausible_coordinates_are_dropped(make_ctx):
     assert days[0].slots[0].lat is None
     assert days[1].slots[0].lat is None
     assert days[0].slots[1].lat == 35.6938
+
+
+async def test_usd_plans_survive_an_exchange_rate_outage(make_ctx):
+    from utils.fx import FxUnavailableError
+
+    async def broken():
+        raise FxUnavailableError("down")
+
+    request = make_request()
+    ctx, _ = make_ctx(request)
+    ctx.fx = broken
+    plan = await create_plan(ctx, request)
+    assert plan.money.currency == "USD" and plan.money.local_currency is None
+
+
+async def test_other_currencies_need_exchange_rates(make_ctx):
+    from utils.fx import FxUnavailableError
+
+    async def broken():
+        raise FxUnavailableError("Couldn't load exchange rates")
+
+    request = make_request(currency="INR", budget=400000)
+    ctx, _ = make_ctx(request)
+    ctx.fx = broken
+    with pytest.raises(PlanningError) as info:
+        await create_plan(ctx, request)
+    assert info.value.status_code == 503
+
+
+async def test_refine_plans_with_the_usd_budget(make_ctx):
+    from orchestrator import refine_plan
+
+    request = make_request(currency="INR", budget=400000)
+    ctx, generator = make_ctx(request)
+    plan = await create_plan(ctx, request)
+    refined = await refine_plan(ctx, plan, "more food")
+    prompt = [user for key, user in generator.calls if key == "itinerary_agent"][-1]
+    assert "$2,900" in prompt  # 5000 USD - flights - hotel, not 400000 - ...
+    assert refined.money == plan.money

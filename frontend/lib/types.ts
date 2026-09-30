@@ -1,5 +1,6 @@
 // Mirrors orchestrator_backend/schemas.py — keep the two in sync.
-// Money is USD for the whole group unless the field name says otherwise.
+// Money in plans is USD for the whole group unless the field name says otherwise;
+// display it with lib/money.tsx, which converts using `TravelPlan.money`.
 
 export type Pace = "relaxed" | "moderate" | "fast";
 export type Accommodation = "budget" | "mid-range" | "luxury";
@@ -22,7 +23,8 @@ export interface TravelRequest {
   origin: string | null;
   start_date: string; // YYYY-MM-DD
   end_date: string;
-  budget: number;
+  budget: number; // in `currency`
+  currency: string; // ISO 4217
   travelers: number;
   preferences: {
     interests: string[];
@@ -39,6 +41,7 @@ export interface ResearchResult {
   safety_tips: string[];
   getting_around: string;
   best_time_to_visit: string;
+  local_currency: string | null;
   sources: { title: string; url: string }[];
 }
 
@@ -175,11 +178,33 @@ export interface TravelPlan {
   itinerary: Itinerary | null;
   budget: BudgetBreakdown;
   validation: Validation | null;
+  money: MoneyInfo | null; // null only for plans made before currencies (then USD)
   errors: { agent: AgentName; message: string; retryable: boolean }[];
   trace: TraceStep[];
   version: number;
   parent_id: string | null;
   refinements: string[];
+}
+
+/** Exchange rates frozen at planning time: units of currency per 1 USD. */
+export interface MoneyInfo {
+  currency: string;
+  usd_rate: number;
+  local_currency: string | null;
+  local_usd_rate: number | null;
+  rates_date: string | null;
+}
+
+export interface ChatMessage {
+  role: "user" | "assistant";
+  content: string;
+}
+
+export interface ChatReply {
+  answer: string;
+  change_request: string | null;
+  suggestions: string[];
+  sources: { title: string; url: string }[];
 }
 
 export interface TraceStep {

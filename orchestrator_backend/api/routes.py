@@ -5,7 +5,10 @@ Endpoints:
     POST /api/v1/plan              create a plan (blocking JSON response)
     POST /api/v1/plan/stream       create a plan with Server-Sent Events progress
     GET  /api/v1/plans/{plan_id}   fetch a previously created plan (shareable link)
-    POST /api/v1/plans/{plan_id}/refine   apply a change request, saved as a new plan version
+    DELETE /api/v1/plans/{plan_id}  delete a saved plan
+    POST /api/v1/plans/{plan_id}/refine     apply a change request, saved as a new version
+    PUT  /api/v1/plans/{plan_id}/itinerary  save a hand-edited itinerary as a new version
+    POST /api/v1/plans/{plan_id}/chat       ask the concierge about a plan
 """
 
 import asyncio
@@ -16,15 +19,16 @@ from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from typing import Any, AsyncIterator
 
-from fastapi import Depends, FastAPI, HTTPException, Request
+from fastapi import Depends, FastAPI, HTTPException, Request, Response
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 
-from agents.base import AgentContext, gemini_generator
+from agents import chat_agent
+from agents.base import AgentContext, LLMUnavailableError, gemini_generator
 from config import Settings, get_settings
-from orchestrator import PlanningError, create_plan, refine_plan
-from schemas import RefineRequest, TravelPlan, TravelRequest
+from orchestrator import PlanningError, create_plan, edit_plan, refine_plan
+from schemas import ChatReply, ChatRequest, ItineraryEdit, RefineRequest, TravelPlan, TravelRequest
 from utils.logger import configure_logging, get_logger
 from utils.store import MemoryStore, Store, create_store
 
@@ -63,6 +67,7 @@ async def lifespan(app: FastAPI):
     app.state.store = await create_store(settings.mongodb_uri, settings.database_name)
     app.state.generate = gemini_generator(settings)
     app.state.limiter = RateLimiter(settings.rate_limit_per_minute)
+    app.state.chat_limiter = RateLimiter(settings.chat_rate_limit_per_minute)
     app.state.semaphore = asyncio.Semaphore(settings.max_concurrent_plans)
     yield
     await app.state.store.close()
@@ -73,7 +78,7 @@ app = FastAPI(title="Multi-Agent Travel Orchestrator", version="1.0.0", lifespan
 app.add_middleware(
     CORSMiddleware,
     allow_origins=get_settings().cors_origins,
-    allow_methods=["GET", "POST"],
+    allow_methods=["GET", "POST", "PUT", "DELETE"],
     allow_headers=["Content-Type"],
 )
 
@@ -105,11 +110,21 @@ async def guard_planning(request: Request) -> None:
         raise HTTPException(429, "Too many plans requested. Please wait a minute and try again.")
 
 
+async def guard_chat(request: Request) -> None:
+    settings: Settings = request.app.state.settings
+    if not settings.has_llm:
+        raise HTTPException(503, "The concierge is not configured: GOOGLE_API_KEY is not set on the server.")
+    if not request.app.state.chat_limiter.check(_client_key(request)):
+        raise HTTPException(429, "You're asking questions very quickly. Please wait a moment.")
+
+
 def _context(request: Request, emit=None) -> AgentContext:
     ctx = AgentContext(
         settings=request.app.state.settings,
         store=request.app.state.store,
         generate=request.app.state.generate,
+        # Tests swap in fixed exchange rates; production uses utils.fx.
+        fx=getattr(request.app.state, "fx", None),
     )
     if emit is not None:
         ctx.emit = emit
@@ -142,7 +157,7 @@ async def plan_trip(body: TravelRequest, request: Request) -> dict[str, Any]:
         try:
             plan = await create_plan(_context(request), body)
         except PlanningError as exc:
-            raise HTTPException(502, str(exc)) from exc
+            raise HTTPException(exc.status_code, str(exc)) from exc
     return await _save(request.app.state.store, plan)
 
 
@@ -218,5 +233,36 @@ async def refine(plan_id: str, body: RefineRequest, request: Request) -> JSONRes
         try:
             refined = await refine_plan(_context(request), plan, body.instruction)
         except PlanningError as exc:
-            raise HTTPException(502, str(exc)) from exc
+            raise HTTPException(exc.status_code, str(exc)) from exc
     return JSONResponse(await _save(store, refined))
+
+
+@app.put("/api/v1/plans/{plan_id}/itinerary", response_model=TravelPlan, dependencies=[Depends(guard_planning)])
+async def save_itinerary(plan_id: str, body: ItineraryEdit, request: Request) -> JSONResponse:
+    store: Store = request.app.state.store
+    plan = TravelPlan.model_validate(await _load(store, plan_id), context={"stored": True})
+    async with request.app.state.semaphore:
+        try:
+            edited = await edit_plan(_context(request), plan, body.itinerary, body.note)
+        except PlanningError as exc:
+            raise HTTPException(exc.status_code, str(exc)) from exc
+    return JSONResponse(await _save(store, edited))
+
+
+@app.post("/api/v1/plans/{plan_id}/chat", response_model=ChatReply, dependencies=[Depends(guard_chat)])
+async def chat(plan_id: str, body: ChatRequest, request: Request) -> ChatReply:
+    plan = TravelPlan.model_validate(await _load(request.app.state.store, plan_id), context={"stored": True})
+    try:
+        return await chat_agent.run(_context(request), plan, body.messages)
+    except LLMUnavailableError as exc:
+        raise HTTPException(503, str(exc)) from exc
+    except Exception as exc:
+        logger.exception("chat failed")
+        raise HTTPException(502, "The concierge couldn't answer that. Please try again.") from exc
+
+
+@app.delete("/api/v1/plans/{plan_id}", status_code=204)
+async def delete_plan(plan_id: str, store: Store = Depends(get_store)) -> Response:
+    await _load(store, plan_id)
+    await store.delete(PLANS_COLLECTION, plan_id)
+    return Response(status_code=204)

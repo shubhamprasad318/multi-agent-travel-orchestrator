@@ -1,3 +1,4 @@
+import { recordTrip } from "@/lib/tripsIndex";
 import type { TravelPlan } from "@/lib/types";
 
 // Session cache so the results page renders instantly after planning; the
@@ -10,6 +11,8 @@ export function cachePlan(plan: TravelPlan): void {
   } catch {
     /* quota exceeded or storage disabled */
   }
+  // Every plan the user opens also appears on the "My trips" page.
+  recordTrip(plan);
 }
 
 export function getCachedPlan(id: string): TravelPlan | null {

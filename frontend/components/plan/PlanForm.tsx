@@ -4,6 +4,7 @@ import { useMemo, useState } from "react";
 import { ArrowRight } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { daysBetween, toISODate } from "@/lib/format";
+import { CURRENCIES, currencySymbol, detectCurrency } from "@/lib/money";
 import type { Accommodation, Pace, TravelRequest } from "@/lib/types";
 
 // Must match max_trip_days on the backend.
@@ -38,6 +39,7 @@ interface FormState {
   start_date: string;
   end_date: string;
   budget: string;
+  currency: string;
   travelers: string;
   interests: string[];
   pace: Pace;
@@ -50,7 +52,9 @@ function toFormState(initial?: TravelRequest | null, destination?: string): Form
     origin: initial?.origin ?? "",
     start_date: initial?.start_date ?? "",
     end_date: initial?.end_date ?? "",
-    budget: String(initial?.budget ?? 2000),
+    // No default amount: a sensible number depends on the currency.
+    budget: initial?.budget ? String(initial.budget) : "",
+    currency: initial?.currency ?? detectCurrency(),
     travelers: String(initial?.travelers ?? 2),
     interests: (initial?.preferences.interests ?? []).map((i) => i.charAt(0).toUpperCase() + i.slice(1)),
     pace: initial?.preferences.pace ?? "moderate",
@@ -68,8 +72,9 @@ function validate(form: FormState, today: string): Partial<Record<keyof FormStat
   else if (form.start_date && daysBetween(form.start_date, form.end_date) + 1 > MAX_TRIP_DAYS)
     errors.end_date = `Trips can be at most ${MAX_TRIP_DAYS} days.`;
   const budget = Number(form.budget);
-  if (!Number.isFinite(budget) || budget < 100) errors.budget = "At least $100.";
-  else if (budget > 1_000_000) errors.budget = "That's a bit much.";
+  if (!form.budget.trim()) errors.budget = "What can you spend in total?";
+  else if (!Number.isFinite(budget) || budget <= 0) errors.budget = "Enter an amount above zero.";
+  else if (budget > 1e12) errors.budget = "That's a bit much.";
   const travelers = Number(form.travelers);
   if (!Number.isInteger(travelers) || travelers < 1 || travelers > 10) errors.travelers = "1 to 10 travelers.";
   return errors;
@@ -105,6 +110,7 @@ export default function PlanForm({ onSubmit, initialValues, initialDestination }
       start_date: form.start_date,
       end_date: form.end_date,
       budget: Number(form.budget),
+      currency: form.currency,
       travelers: Number(form.travelers),
       preferences: {
         interests: form.interests.map((i) => i.toLowerCase()),
@@ -186,20 +192,34 @@ export default function PlanForm({ onSubmit, initialValues, initialDestination }
               className={inputClass}
             />
           </Field>
-          <Field id="budget" label="Total budget (USD)" error={shown.budget} hint="For the whole group: flights, stay, food, fun">
-            <div className="flex items-baseline">
-              <span className="font-serif text-xl text-ink-muted mr-1">$</span>
+          <Field id="budget" label="Total budget" error={shown.budget} hint="For the whole group: flights, stay, food, fun">
+            <div className="flex items-baseline gap-3">
+              <span className="font-serif text-xl text-ink-muted" aria-hidden>{currencySymbol(form.currency)}</span>
               <input
                 id="budget"
                 type="number"
                 inputMode="numeric"
-                min={100}
-                step={100}
+                min={1}
+                placeholder="Amount"
                 value={form.budget}
                 onChange={(e) => update("budget", e.target.value)}
                 aria-invalid={!!shown.budget}
                 className={inputClass}
               />
+              <label htmlFor="currency" className="sr-only">Currency</label>
+              <select
+                id="currency"
+                value={form.currency}
+                onChange={(e) => update("currency", e.target.value)}
+                className="shrink-0 border-b border-ink/30 bg-transparent pb-2 pt-1 text-lg text-ink focus:border-terracotta focus:outline-none"
+              >
+                {CURRENCIES.some((c) => c.code === form.currency) ? null : <option value={form.currency}>{form.currency}</option>}
+                {CURRENCIES.map((c) => (
+                  <option key={c.code} value={c.code}>
+                    {c.code} · {c.name}
+                  </option>
+                ))}
+              </select>
             </div>
           </Field>
         </div>

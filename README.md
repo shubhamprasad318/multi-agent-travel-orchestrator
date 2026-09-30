@@ -23,6 +23,11 @@ Runs on a single free **Google AI Studio** key.
 - **Budget math in code, not in the model**: models estimate prices; the backend adds them up, so totals, remaining budget and "over budget" status are always consistent.
 - **Self-correcting**: a validator scores every plan (6 weighted categories). A low-scoring plan is revised once, and a revision is kept only if it scores higher.
 - **Refine by chat**: "make day 2 more relaxed" re-plans the itinerary, re-validates it and saves a new version linked to the old one.
+- **Your currency, plus the local one**: plan in any of 160+ currencies (auto-detected from your browser). Every price shows your currency with the destination's alongside, e.g. ₹2,800 · ¥5,000, using live exchange rates frozen at planning time.
+- **Chat with your trip**: a concierge answers questions about *your* plan ("what should I pack for day 2?"), uses Google Search for current facts, and can turn a request into a one-click change.
+- **Drag & drop editing**: move stops between days, edit or delete them, add your own; costs and the map update live, and saving creates a re-scored new version.
+- **Budget charts**: where the money goes (by category, against your budget), spend per day, and a per-person split.
+- **My trips**: every plan you make is listed with its photo, versions, cost and score; compare two trips side by side, or delete them.
 - **Shareable plans**: every plan has a URL (`/results?id=…`) backed by the API.
 - **Honest data**: weather is labelled *forecast* vs *typical conditions*; flight and hotel prices are labelled as estimates and link to Google Flights / Booking.com with your dates pre-filled for live prices.
 - **Export**: add the itinerary to your calendar (`.ics`) or print / save as PDF (all sections).
@@ -96,6 +101,10 @@ npm run dev                     # http://localhost:3000
 | `RATE_LIMIT_PER_MINUTE` | `5` | Planning requests per client IP. |
 | `MAX_CONCURRENT_PLANS` | `2` | Keep low on the free tier (each plan makes ~7 Gemini calls). |
 | `DEBUG` | `false` | Includes agent error details in responses. |
+| `GEMINI_FALLBACK_MODEL` | `gemini-3.5-flash-lite` | Used when the main model is overloaded or out of quota. |
+| `CHAT_RATE_LIMIT_PER_MINUTE` | `20` | Concierge questions per client IP. |
+
+Exchange rates come from [open.er-api.com](https://www.exchangerate-api.com/docs/free) (free, no key) and are cached for 12 hours.
 
 Agent temperatures, token limits and thinking levels live in `AGENT_CONFIG` in `config.py`; validation thresholds and weights live in `VALIDATION_CONFIG`.
 
@@ -110,6 +119,9 @@ Agent temperatures, token limits and thinking levels live in `AGENT_CONFIG` in `
 | `POST` | `/api/v1/plan/stream` | Create a plan with SSE `progress` events, then a `result` or `error` event |
 | `GET` | `/api/v1/plans/{id}` | Fetch a saved plan |
 | `POST` | `/api/v1/plans/{id}/refine` | `{"instruction": "..."}` → a new plan version |
+| `PUT` | `/api/v1/plans/{id}/itinerary` | `{"itinerary": {...}}` (hand-edited) → a new, re-scored plan version |
+| `POST` | `/api/v1/plans/{id}/chat` | `{"messages": [{"role": "user", "content": "..."}]}` → concierge answer, sources, optional change request |
+| `DELETE` | `/api/v1/plans/{id}` | Delete a saved plan |
 
 Request body:
 
@@ -119,13 +131,14 @@ Request body:
   "origin": "San Francisco",
   "start_date": "2026-11-15",
   "end_date": "2026-11-21",
-  "budget": 5000,
+  "budget": 400000,
+  "currency": "INR",
   "travelers": 2,
   "preferences": { "interests": ["food", "culture"], "pace": "moderate", "accommodation": "mid-range" }
 }
 ```
 
-`budget` is the total in USD for the whole group. `origin` is optional (without it, no flight estimates). `pace` is `relaxed | moderate | fast`; `accommodation` is `budget | mid-range | luxury`. Trips can be up to 21 days. The full response schema is in `orchestrator_backend/schemas.py`, mirrored in `frontend/lib/types.ts`.
+`budget` is the total for the whole group, in `currency` (ISO 4217, default `USD`). Agents plan in USD internally; the response's `money` object carries the exchange rates (your currency and the destination's) used for display, and every amount in the response is in USD. `origin` is optional (without it, no flight estimates). `pace` is `relaxed | moderate | fast`; `accommodation` is `budget | mid-range | luxury`. Trips can be up to 21 days. The full response schema is in `orchestrator_backend/schemas.py`, mirrored in `frontend/lib/types.ts`.
 
 ## Evaluation
 

@@ -1,9 +1,3 @@
-const usd = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 });
-
-export function formatUSD(value: number | null | undefined): string {
-  return typeof value === "number" && Number.isFinite(value) ? usd.format(value) : "—";
-}
-
 /** Format a YYYY-MM-DD date without the UTC-midnight off-by-one that `new Date("2025-01-02")` causes. */
 export function formatDate(isoDate: string, options: Intl.DateTimeFormatOptions = { month: "short", day: "numeric" }): string {
   const [y, m, d] = isoDate.split("-").map(Number);

@@ -19,6 +19,8 @@ class Store(Protocol):
 
     async def set(self, collection: str, key: str, value: dict[str, Any], ttl: int | None = None) -> None: ...
 
+    async def delete(self, collection: str, key: str) -> None: ...
+
     async def close(self) -> None: ...
 
 
@@ -44,6 +46,9 @@ class MemoryStore:
         bucket.move_to_end(key)
         while len(bucket) > self._max:
             bucket.popitem(last=False)
+
+    async def delete(self, collection: str, key: str) -> None:
+        self._data.get(collection, OrderedDict()).pop(key, None)
 
     async def close(self) -> None:
         self._data.clear()
@@ -80,6 +85,9 @@ class MongoStore:
         if ttl:
             doc["expires_at"] = datetime.now(timezone.utc) + timedelta(seconds=ttl)
         await (await self._collection(collection)).replace_one({"_id": key}, doc, upsert=True)
+
+    async def delete(self, collection: str, key: str) -> None:
+        await (await self._collection(collection)).delete_one({"_id": key})
 
     async def close(self) -> None:
         await self._client.close()

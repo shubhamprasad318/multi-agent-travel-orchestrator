@@ -14,7 +14,7 @@ import asyncio
 import operator
 import time
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Annotated, Any, Awaitable, Callable, TypedDict
 
 from langgraph.graph import END, START, StateGraph
@@ -28,7 +28,9 @@ from schemas import (
     AgentName,
     BookingsResult,
     BudgetBreakdown,
+    DayPlan,
     Itinerary,
+    MoneyInfo,
     ResearchResult,
     TraceStep,
     TravelPlan,
@@ -38,6 +40,7 @@ from schemas import (
     WeatherResult,
 )
 from utils.budget import compute_budget
+from utils.fx import MAX_BUDGET_USD, FxUnavailableError, UnsupportedCurrencyError, fetch_rates, rate_for
 from utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -61,7 +64,64 @@ class PlanState(TypedDict, total=False):
 
 
 class PlanningError(RuntimeError):
-    """The plan could not be produced at all (as opposed to partially)."""
+    """The plan could not be produced at all (as opposed to partially).
+
+    The message is shown to users; `status_code` is the HTTP status to return.
+    """
+
+    def __init__(self, message: str, status_code: int = 502) -> None:
+        super().__init__(message)
+        self.status_code = status_code
+
+
+# --------------------------------------------------------------------------- #
+# Currency: plans are made in USD; the traveller's currency is display-only.
+# --------------------------------------------------------------------------- #
+
+
+async def _load_rates(ctx: AgentContext, currency: str) -> tuple[dict[str, float], str | None]:
+    loader = ctx.fx or (lambda: fetch_rates(ctx.store))
+    try:
+        return await loader()
+    except FxUnavailableError as exc:
+        if currency == "USD":
+            # USD needs no conversion; only the local-currency display is lost.
+            return {"USD": 1.0}, None
+        raise PlanningError(str(exc), status_code=503) from exc
+
+
+def _to_planning_request(request: TravelRequest, usd_rate: float) -> TravelRequest:
+    """The same request with the budget converted to USD (not re-validated)."""
+    return request.model_copy(update={"budget": request.budget / usd_rate, "currency": "USD"})
+
+
+async def _planning_request(ctx: AgentContext, request: TravelRequest) -> tuple[TravelRequest, dict[str, float], str | None]:
+    rates, rates_date = await _load_rates(ctx, request.currency)
+    try:
+        usd_rate = rate_for(rates, request.currency)
+    except UnsupportedCurrencyError as exc:
+        raise PlanningError(str(exc), status_code=422) from exc
+    planning = _to_planning_request(request, usd_rate)
+    if planning.budget > MAX_BUDGET_USD:
+        raise PlanningError("That budget is too large to plan for.", status_code=422)
+    return planning, rates, rates_date
+
+
+def _money_info(request: TravelRequest, rates: dict[str, float], rates_date: str | None, research: ResearchResult | None) -> MoneyInfo:
+    local = research.local_currency if research else None
+    local_rate = rates.get(local) if local else None
+    return MoneyInfo(
+        currency=request.currency,
+        usd_rate=rate_for(rates, request.currency),
+        local_currency=local if local_rate else None,
+        local_usd_rate=local_rate,
+        rates_date=rates_date,
+    )
+
+
+def stored_planning_request(plan: TravelPlan) -> TravelRequest:
+    """USD planning request for a saved plan, using the rate frozen at planning time."""
+    return _to_planning_request(plan.request, plan.money.usd_rate if plan.money else 1.0)
 
 
 WEATHER_DETAIL = {
@@ -266,10 +326,11 @@ def build_graph(ctx: AgentContext):
 
 async def create_plan(ctx: AgentContext, request: TravelRequest) -> TravelPlan:
     ctx.started_at = time.perf_counter()
+    planning, rates, rates_date = await _planning_request(ctx, request)
     graph = build_graph(ctx)
     try:
         state: PlanState = await asyncio.wait_for(
-            graph.ainvoke({"request": request, "errors": [], "trace": [], "revisions": 0}),
+            graph.ainvoke({"request": planning, "errors": [], "trace": [], "revisions": 0}),
             timeout=ctx.settings.plan_timeout_seconds,
         )
     except TimeoutError as exc:
@@ -289,6 +350,7 @@ async def create_plan(ctx: AgentContext, request: TravelRequest) -> TravelPlan:
         id=uuid.uuid4().hex,
         status="partial" if errors else "complete",
         created_at=datetime.now(timezone.utc),
+        # The request as the traveller sent it (budget in their currency).
         request=request,
         trip=TripSummary(
             destination=request.destination,
@@ -304,12 +366,59 @@ async def create_plan(ctx: AgentContext, request: TravelRequest) -> TravelPlan:
         activities=state.get("activities"),
         bookings=state.get("bookings"),
         itinerary=itinerary,
-        # Always recomputed from the final itinerary/bookings.
-        budget=compute_budget(request, state.get("bookings"), itinerary),
+        # Always recomputed from the final itinerary/bookings, in USD.
+        budget=compute_budget(planning, state.get("bookings"), itinerary),
         validation=validation,
+        money=_money_info(request, rates, rates_date, state.get("research")),
         errors=errors,
         trace=state.get("trace", []),
     )
+
+
+async def _new_version(
+    ctx: AgentContext, plan: TravelPlan, itinerary: Itinerary, note: str, steps: list[TraceStep]
+) -> TravelPlan:
+    """Re-score an itinerary and return it as the next version of `plan`."""
+    planning = stored_planning_request(plan)
+    budget = compute_budget(planning, plan.bookings, itinerary)
+    errors = [e for e in plan.errors if e.agent != "validator"]
+
+    async def validate() -> dict[str, Any]:
+        result = await validator_agent.run(ctx, planning, itinerary, plan.weather, plan.activities, plan.bookings, budget)
+        before = plan.validation.overall_score if plan.validation else None
+        change = f" (was {before})" if before is not None else ""
+        return {"validation": result, "_detail": f"Score {result.overall_score}/100{change}"}
+
+    validated, validator_step, validator_error = await _run_step(ctx, "validator", validate)
+    if validator_error is not None:
+        errors.append(_error(ctx, "validator", validator_error))
+    return plan.model_copy(
+        update={
+            "id": uuid.uuid4().hex,
+            "created_at": datetime.now(timezone.utc),
+            "itinerary": itinerary,
+            "budget": budget,
+            "validation": validated["validation"] if validated else None,
+            "errors": errors,
+            "status": "partial" if errors else "complete",
+            "trace": [*steps, validator_step],
+            "version": plan.version + 1,
+            "parent_id": plan.id,
+            "refinements": [*plan.refinements, note],
+        }
+    )
+
+
+async def _with_timeout(ctx: AgentContext, work: Awaitable[TravelPlan], failure: str) -> TravelPlan:
+    try:
+        return await asyncio.wait_for(work, timeout=ctx.settings.plan_timeout_seconds)
+    except TimeoutError as exc:
+        raise PlanningError("That took too long. Please try again.") from exc
+    except PlanningError:
+        raise
+    except Exception as exc:
+        logger.exception("plan update failed")
+        raise PlanningError(failure) from exc
 
 
 async def refine_plan(ctx: AgentContext, plan: TravelPlan, instruction: str) -> TravelPlan:
@@ -318,13 +427,13 @@ async def refine_plan(ctx: AgentContext, plan: TravelPlan, instruction: str) -> 
     Only the itinerary and validation are regenerated; research, weather,
     activities and bookings are reused. The result is a new plan version.
     """
-    request = plan.request
     ctx.started_at = time.perf_counter()
+    planning = stored_planning_request(plan)
 
     async def replan() -> dict[str, Any]:
         itinerary = await itinerary_agent.run(
             ctx,
-            request,
+            planning,
             plan.research,
             plan.weather,
             plan.activities,
@@ -335,48 +444,40 @@ async def refine_plan(ctx: AgentContext, plan: TravelPlan, instruction: str) -> 
         return {"itinerary": itinerary, "_detail": f"Applied change: {instruction}"}
 
     async def run() -> TravelPlan:
-        update, itinerary_step, error = await _run_step(ctx, "itinerary", replan)
+        update, step, error = await _run_step(ctx, "itinerary", replan)
         if error is not None or update is None:
             if isinstance(error, LLMUnavailableError):
-                raise PlanningError(str(error))
+                raise PlanningError(str(error), status_code=503)
             raise PlanningError("We couldn't apply that change. Try rephrasing it.")
-        itinerary: Itinerary = update["itinerary"]
-        budget = compute_budget(request, plan.bookings, itinerary)
-        errors = [e for e in plan.errors if e.agent != "validator"]
+        return await _new_version(ctx, plan, update["itinerary"], instruction, [step])
 
-        async def validate() -> dict[str, Any]:
-            result = await validator_agent.run(
-                ctx, request, itinerary, plan.weather, plan.activities, plan.bookings, budget
-            )
-            before = plan.validation.overall_score if plan.validation else None
-            change = f" (was {before})" if before is not None else ""
-            return {"validation": result, "_detail": f"Score {result.overall_score}/100{change}"}
+    return await _with_timeout(ctx, run(), "We couldn't apply that change. Try rephrasing it.")
 
-        validated, validator_step, validator_error = await _run_step(ctx, "validator", validate)
-        if validator_error is not None:
-            errors.append(_error(ctx, "validator", validator_error))
-        return plan.model_copy(
-            update={
-                "id": uuid.uuid4().hex,
-                "created_at": datetime.now(timezone.utc),
-                "itinerary": itinerary,
-                "budget": budget,
-                "validation": validated["validation"] if validated else None,
-                "errors": errors,
-                "status": "partial" if errors else "complete",
-                "trace": [itinerary_step, validator_step],
-                "version": plan.version + 1,
-                "parent_id": plan.id,
-                "refinements": [*plan.refinements, instruction],
-            }
+
+def normalize_edited_itinerary(plan: TravelPlan, edited: Itinerary) -> Itinerary:
+    """Server-side truth for a hand-edited itinerary: real dates, recomputed totals."""
+    request = plan.request
+    days = sorted(edited.days, key=lambda d: d.day)[: request.days]
+    normalized = [
+        DayPlan(
+            day=index + 1,
+            date=request.start_date + timedelta(days=index),
+            theme=day.theme.strip() or f"Day {index + 1}",
+            slots=day.slots,
+            meals=day.meals,
+            backup_options=day.backup_options,
+            weather_note=day.weather_note,
+            total_cost=round(sum(s.cost for s in day.slots) + sum(m.cost for m in day.meals), 2),
         )
+        for index, day in enumerate(days)
+    ]
+    return Itinerary(days=normalized, highlights=edited.highlights, tips=edited.tips)
 
-    try:
-        return await asyncio.wait_for(run(), timeout=ctx.settings.plan_timeout_seconds)
-    except TimeoutError as exc:
-        raise PlanningError("Refining took too long. Please try again.") from exc
-    except PlanningError:
-        raise
-    except Exception as exc:
-        logger.exception("refinement failed")
-        raise PlanningError("We couldn't apply that change. Try rephrasing it.") from exc
+
+async def edit_plan(ctx: AgentContext, plan: TravelPlan, edited: Itinerary, note: str) -> TravelPlan:
+    """Save a hand-edited itinerary as a new version and re-score it."""
+    ctx.started_at = time.perf_counter()
+    itinerary = normalize_edited_itinerary(plan, edited)
+    if not any(day.slots for day in itinerary.days):
+        raise PlanningError("The itinerary needs at least one stop.", status_code=422)
+    return await _with_timeout(ctx, _new_version(ctx, plan, itinerary, note, []), "We couldn't save your edits. Please try again.")

@@ -5,15 +5,20 @@ import pytest
 from fastapi.testclient import TestClient
 
 from api.routes import RateLimiter, app
-from tests.conftest import START, FakeGenerator, default_responses, make_request
+from agents.chat_agent import ChatDraft
+from tests.conftest import START, FakeGenerator, default_responses, fake_fx, make_request
 
 
 @pytest.fixture
 def client(settings, monkeypatch):
     monkeypatch.setattr("api.routes.get_settings", lambda: settings)
     with TestClient(app) as test_client:
-        app.state.generate = FakeGenerator(default_responses(make_request()))
+        responses = default_responses(make_request())
+        responses["ChatDraft"] = ChatDraft(answer="Pack an umbrella for day 2.", change_request="", suggestions=["What about day 3?"])
+        app.state.generate = FakeGenerator(responses)
+        app.state.fx = fake_fx
         yield test_client
+        app.state.fx = None
 
 
 def payload(**overrides):
@@ -131,3 +136,76 @@ def test_server_starts_without_a_key(monkeypatch):
         response = test_client.post("/api/v1/plan", json=payload())
         assert response.status_code == 503
         assert "GOOGLE_API_KEY" in response.json()["detail"]
+
+
+def test_plan_in_another_currency(client):
+    plan = client.post("/api/v1/plan", json=payload(budget=400000, currency="inr")).json()
+    assert plan["request"]["currency"] == "INR" and plan["request"]["budget"] == 400000
+    assert plan["money"] == {
+        "currency": "INR", "usd_rate": 80.0, "local_currency": "JPY", "local_usd_rate": 150.0, "rates_date": "test-date",
+    }
+    # Planning happens in USD: 400000 INR / 80 = 5000 USD.
+    assert plan["budget"]["total_budget"] == 5000
+
+
+def test_unsupported_currency_is_rejected(client):
+    response = client.post("/api/v1/plan", json=payload(currency="XYZ"))
+    assert response.status_code == 422
+    assert "XYZ" in response.json()["detail"]
+
+
+def test_edit_itinerary_moves_a_stop_and_recomputes(client):
+    plan = client.post("/api/v1/plan", json=payload()).json()
+    itinerary = plan["itinerary"]
+    first_date = itinerary["days"][0]["date"]
+    moved = itinerary["days"][0]["slots"].pop()
+    itinerary["days"][1]["slots"].append({**moved, "cost": 75})
+    itinerary["days"][0]["date"] = "1999-01-01"  # ignored: dates come from the trip
+    itinerary["days"][0]["total_cost"] = 123456  # ignored: totals are recomputed
+
+    response = client.put(f"/api/v1/plans/{plan['id']}/itinerary", json={"itinerary": itinerary})
+
+    assert response.status_code == 200
+    edited = response.json()
+    assert edited["version"] == 2 and edited["parent_id"] == plan["id"]
+    assert edited["refinements"] == ["Edited by hand"]
+    day1, day2 = edited["itinerary"]["days"][:2]
+    assert day1["date"] == first_date
+    assert day1["total_cost"] == 50 + 30 and day2["total_cost"] == 50 + 50 + 75 + 30
+    assert edited["budget"]["activities"] == plan["budget"]["activities"] + 25
+    assert [s["agent"] for s in edited["trace"]] == ["validator"]
+
+
+def test_edit_rejects_an_empty_itinerary(client):
+    plan = client.post("/api/v1/plan", json=payload()).json()
+    for day in plan["itinerary"]["days"]:
+        day["slots"] = []
+    response = client.put(f"/api/v1/plans/{plan['id']}/itinerary", json={"itinerary": plan["itinerary"]})
+    assert response.status_code == 422
+
+
+def test_chat_answers_with_plan_context(client):
+    plan = client.post("/api/v1/plan", json=payload(budget=400000, currency="INR")).json()
+    response = client.post(
+        f"/api/v1/plans/{plan['id']}/chat",
+        json={"messages": [{"role": "user", "content": "Do I need an umbrella?"}]},
+    )
+    assert response.status_code == 200
+    reply = response.json()
+    assert reply["answer"] == "Pack an umbrella for day 2."
+    assert reply["change_request"] is None
+    prompt = app.state.generate.calls[-1][1]
+    assert "Museum 1" in prompt and "INR" in prompt and "Do I need an umbrella?" in prompt
+
+
+def test_chat_requires_a_user_message_last(client):
+    plan = client.post("/api/v1/plan", json=payload()).json()
+    response = client.post(f"/api/v1/plans/{plan['id']}/chat", json={"messages": [{"role": "assistant", "content": "hi"}]})
+    assert response.status_code == 422
+
+
+def test_delete_plan(client):
+    plan = client.post("/api/v1/plan", json=payload()).json()
+    assert client.delete(f"/api/v1/plans/{plan['id']}").status_code == 204
+    assert client.get(f"/api/v1/plans/{plan['id']}").status_code == 404
+    assert client.delete(f"/api/v1/plans/{plan['id']}").status_code == 404

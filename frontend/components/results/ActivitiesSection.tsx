@@ -1,4 +1,4 @@
-import { formatUSD } from "@/lib/format";
+import { Price } from "@/lib/money";
 import { mapsUrl } from "@/lib/calendar";
 import type { Activity, ActivityCategory } from "@/lib/types";
 import { EmptyState, ExternalLink, Section } from "./shared";
@@ -33,9 +33,7 @@ export default function ActivitiesSection({ activities, destination }: { activit
                     <div className="flex items-baseline">
                       <h4 className="font-serif text-xl text-ink">{activity.name}</h4>
                       <span className="leader" aria-hidden />
-                      <span className="tabular-nums text-ink-soft whitespace-nowrap">
-                        {activity.estimated_cost > 0 ? formatUSD(activity.estimated_cost) : "Free"}
-                      </span>
+                      <Price usd={activity.estimated_cost} free className="text-ink-soft" />
                     </div>
                     <p className="mt-2 text-[15px] leading-relaxed text-ink-soft">{activity.description}</p>
                     <p className="mt-2 text-xs text-ink-muted">

@@ -49,6 +49,13 @@ export default function Navbar() {
             </Link>
           ))}
           <Link
+            href="/trips"
+            aria-current={pathname === "/trips" ? "page" : undefined}
+            className="text-sm text-ink-soft hover:text-terracotta transition-colors aria-[current=page]:text-terracotta"
+          >
+            My trips
+          </Link>
+          <Link
             href="/plan"
             aria-current={pathname === "/plan" ? "page" : undefined}
             className="rounded-full bg-ink px-5 py-2 text-sm font-medium text-paper hover:bg-terracotta transition-colors"
@@ -76,6 +83,9 @@ export default function Navbar() {
               {link.label}
             </Link>
           ))}
+          <Link href="/trips" className="block py-3 border-b border-rule font-serif text-xl text-ink">
+            My trips
+          </Link>
           <Link href="/plan" className="mt-4 block rounded-full bg-ink px-5 py-3 text-center font-medium text-paper">
             Plan a trip
           </Link>

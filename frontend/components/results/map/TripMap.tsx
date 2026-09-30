@@ -4,7 +4,7 @@ import "leaflet/dist/leaflet.css";
 import { useEffect, useMemo } from "react";
 import L from "leaflet";
 import { MapContainer, Marker, Polyline, Popup, TileLayer, useMap } from "react-leaflet";
-import { formatUSD } from "@/lib/format";
+import { useMoney } from "@/lib/money";
 import type { DayPlan } from "@/lib/types";
 import { dayColor } from "./colors";
 
@@ -58,6 +58,7 @@ export function stopsFor(days: DayPlan[]): Stop[] {
 }
 
 export default function TripMap({ days }: { days: DayPlan[] }) {
+  const money = useMoney();
   const stops = useMemo(() => stopsFor(days), [days]);
   const routes = useMemo(() => {
     const byDay = new Map<number, [number, number][]>();
@@ -88,7 +89,7 @@ export default function TripMap({ days }: { days: DayPlan[] }) {
             {stop.activity}
             <br />
             <span style={{ color: "#6b7280" }}>
-              {stop.location} · {stop.cost > 0 ? formatUSD(stop.cost) : "Free"}
+              {stop.location} · {stop.cost > 0 ? money.format(stop.cost) : "Free"}
             </span>
           </Popup>
         </Marker>

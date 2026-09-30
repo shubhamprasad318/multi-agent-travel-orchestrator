@@ -1,14 +1,17 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import { AlertTriangle } from "lucide-react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { formatUSD } from "@/lib/format";
+import { MoneyProvider, moneyFor } from "@/lib/money";
 import { cn } from "@/lib/utils";
 import type { TravelPlan } from "@/lib/types";
 import { AGENT_LABEL } from "@/components/trace/TraceTimeline";
+import TripChat from "@/components/chat/TripChat";
 import ActivitiesSection from "./ActivitiesSection";
 import BehindTheScenesSection from "./BehindTheScenesSection";
 import BookingsSection from "./BookingsSection";
+import BudgetSection from "./BudgetSection";
 import ItinerarySection from "./ItinerarySection";
 import MapSection from "./map/MapSection";
 import RefinePanel from "./RefinePanel";
@@ -21,6 +24,7 @@ import WeatherSection from "./WeatherSection";
 const TABS = [
   { value: "itinerary", label: "Itinerary", print: true },
   { value: "map", label: "Map", print: false },
+  { value: "budget", label: "Budget", print: true },
   { value: "bookings", label: "Flights & hotels", print: true },
   { value: "weather", label: "Weather", print: true },
   { value: "activities", label: "Things to do", print: true },
@@ -29,14 +33,34 @@ const TABS = [
   { value: "trace", label: "Behind the scenes", print: false },
 ] as const;
 
+type TabValue = (typeof TABS)[number]["value"];
+
 export default function TravelPlanDisplay({ plan }: { plan: TravelPlan }) {
   const { trip, budget, validation } = plan;
   const destination = trip.destination;
+  const money = moneyFor(plan);
+  const [tab, setTab] = useState<TabValue>("itinerary");
+
+  // The open tab lives in the URL hash (#budget, #map…) so links can point at it.
+  useEffect(() => {
+    const fromHash = () => {
+      const hash = window.location.hash.slice(1);
+      if (TABS.some((t) => t.value === hash)) setTab(hash as TabValue);
+    };
+    fromHash();
+    window.addEventListener("hashchange", fromHash);
+    return () => window.removeEventListener("hashchange", fromHash);
+  }, []);
+
+  const changeTab = (value: string) => {
+    setTab(value as TabValue);
+    window.history.replaceState(null, "", `${window.location.pathname}${window.location.search}#${value}`);
+  };
 
   const glance = [
     { label: "Duration", value: `${trip.days} day${trip.days === 1 ? "" : "s"}`, note: `${trip.nights} night${trip.nights === 1 ? "" : "s"}` },
-    { label: "Estimated cost", value: formatUSD(budget.estimated_total), note: <span className={BUDGET_TONE[budget.status]}>{budget.status.toLowerCase()} · budget {formatUSD(budget.total_budget)}</span> },
-    { label: "Per traveler", value: formatUSD(budget.estimated_total / trip.travelers), note: `${trip.travelers} traveler${trip.travelers === 1 ? "" : "s"}` },
+    { label: "Estimated cost", value: money.format(budget.estimated_total), note: <span className={BUDGET_TONE[budget.status]}>{budget.status.toLowerCase()} · budget {money.format(budget.total_budget)}</span> },
+    { label: "Per traveler", value: money.format(budget.estimated_total / trip.travelers), note: `${trip.travelers} traveler${trip.travelers === 1 ? "" : "s"}` },
     {
       label: "Editor's score",
       value: validation ? `${validation.overall_score}` : "—",
@@ -44,9 +68,10 @@ export default function TravelPlanDisplay({ plan }: { plan: TravelPlan }) {
     },
   ];
 
-  const sections: Record<(typeof TABS)[number]["value"], React.ReactNode> = {
-    itinerary: <ItinerarySection itinerary={plan.itinerary} destination={destination} />,
+  const sections: Record<TabValue, React.ReactNode> = {
+    itinerary: <ItinerarySection itinerary={plan.itinerary} destination={destination} planId={plan.id} />,
     map: <MapSection itinerary={plan.itinerary} />,
+    budget: <BudgetSection budget={budget} itinerary={plan.itinerary} bookings={plan.bookings} travelers={trip.travelers} />,
     bookings: <BookingsSection bookings={plan.bookings} />,
     weather: <WeatherSection weather={plan.weather} />,
     activities: <ActivitiesSection activities={plan.activities?.activities ?? null} destination={destination} />,
@@ -56,7 +81,7 @@ export default function TravelPlanDisplay({ plan }: { plan: TravelPlan }) {
   };
 
   return (
-    <>
+    <MoneyProvider plan={plan}>
       <div className="container">
         <dl className="grid grid-cols-2 lg:grid-cols-4 border-b border-rule">
           {glance.map((item, i) => (
@@ -78,7 +103,7 @@ export default function TravelPlanDisplay({ plan }: { plan: TravelPlan }) {
           </div>
         )}
 
-        <Tabs defaultValue="itinerary" className="mt-10">
+        <Tabs value={tab} onValueChange={changeTab} className="mt-10">
           <div className="sticky top-16 z-30 -mx-5 md:-mx-8 bg-paper/95 backdrop-blur px-5 md:px-8 print:hidden">
             <TabsList className="h-auto w-full justify-start gap-6 overflow-x-auto rounded-none border-b border-rule bg-transparent p-0">
               {TABS.map((tab) => (
@@ -108,6 +133,7 @@ export default function TravelPlanDisplay({ plan }: { plan: TravelPlan }) {
       </div>
 
       <RefinePanel plan={plan} />
-    </>
+      <TripChat plan={plan} />
+    </MoneyProvider>
   );
 }

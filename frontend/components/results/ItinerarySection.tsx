@@ -1,15 +1,50 @@
-import { formatDate, formatUSD } from "@/lib/format";
+"use client";
+
+import { useEffect, useState } from "react";
+import { Pencil } from "lucide-react";
+import { formatDate } from "@/lib/format";
+import { Price } from "@/lib/money";
 import { mapsUrl } from "@/lib/calendar";
 import type { Itinerary } from "@/lib/types";
+import ItineraryEditor from "./edit/ItineraryEditor";
 import { BulletList, EmptyState, ExternalLink, Section } from "./shared";
 
 const PERIOD_LABEL = { morning: "Morning", afternoon: "Afternoon", evening: "Evening" } as const;
 
-export default function ItinerarySection({ itinerary, destination }: { itinerary: Itinerary | null; destination: string }) {
+export default function ItinerarySection({
+  itinerary,
+  destination,
+  planId,
+}: {
+  itinerary: Itinerary | null;
+  destination: string;
+  /** Enables hand-editing (saved as a new version of this plan). */
+  planId?: string;
+}) {
+  const [editing, setEditing] = useState(false);
+  // Saving navigates to the new version; leave edit mode when the plan changes.
+  useEffect(() => setEditing(false), [planId]);
+
   if (!itinerary || itinerary.days.length === 0) return <EmptyState message="No itinerary available." />;
 
+  const editButton =
+    planId && !editing ? (
+      <button
+        type="button"
+        onClick={() => setEditing(true)}
+        className="inline-flex items-center gap-2 rounded-full border border-rule px-4 py-2 text-sm text-ink-soft hover:border-ink hover:text-ink transition-colors print:hidden"
+      >
+        <Pencil className="h-4 w-4" aria-hidden /> Edit itinerary
+      </button>
+    ) : editing ? (
+      <span className="eyebrow">Editing</span>
+    ) : undefined;
+
   return (
-    <Section eyebrow="The itinerary" title="Day by day">
+    <Section eyebrow="The itinerary" title="Day by day" aside={editButton}>
+      {editing && planId ? (
+        <ItineraryEditor planId={planId} itinerary={itinerary} onCancel={() => setEditing(false)} />
+      ) : (
       <ol className="space-y-16">
         {itinerary.days.map((day) => (
           <li key={day.day} className="grid gap-6 md:grid-cols-[8rem_1fr] md:gap-10 break-inside-avoid">
@@ -36,7 +71,7 @@ export default function ItinerarySection({ itinerary, destination }: { itinerary
                       <div className="flex items-baseline text-[17px]">
                         <span className="text-ink">{slot.activity}</span>
                         <span className="leader" aria-hidden />
-                        <span className="tabular-nums text-ink-soft whitespace-nowrap">{slot.cost > 0 ? formatUSD(slot.cost) : "Free"}</span>
+                        <Price usd={slot.cost} free className="text-ink-soft" />
                       </div>
                       {slot.location && (
                         <ExternalLink href={mapsUrl(slot.location, destination)} className="mt-1 text-xs text-ink-muted">
@@ -60,7 +95,7 @@ export default function ItinerarySection({ itinerary, destination }: { itinerary
                           {meal.cuisine && <span className="text-ink-muted"> · {meal.cuisine}</span>}
                         </span>
                         <span className="leader" aria-hidden />
-                        <span className="tabular-nums text-ink-soft">{formatUSD(meal.cost)}</span>
+                        <Price usd={meal.cost} className="text-ink-soft" />
                       </li>
                     ))}
                   </ul>
@@ -76,12 +111,13 @@ export default function ItinerarySection({ itinerary, destination }: { itinerary
 
               <div className="mt-8 flex items-baseline justify-end gap-3 border-t border-rule pt-3">
                 <span className="text-sm text-ink-muted">Day total</span>
-                <span className="font-serif text-2xl text-ink tabular-nums">{formatUSD(day.total_cost)}</span>
+                <Price usd={day.total_cost} className="font-serif text-2xl text-ink" localClassName="font-sans" />
               </div>
             </article>
           </li>
         ))}
       </ol>
+      )}
 
       {(itinerary.highlights.length > 0 || itinerary.tips.length > 0) && (
         <div className="mt-16 grid gap-10 bg-paper-deep p-8 md:grid-cols-2">

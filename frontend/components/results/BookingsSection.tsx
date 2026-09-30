@@ -1,4 +1,4 @@
-import { formatUSD } from "@/lib/format";
+import { Price, useMoney } from "@/lib/money";
 import type { BookingsResult } from "@/lib/types";
 import { BulletList, EmptyState, ExternalLink, Section } from "./shared";
 
@@ -7,6 +7,7 @@ function UsedInBudget() {
 }
 
 export default function BookingsSection({ bookings }: { bookings: BookingsResult | null }) {
+  const money = useMoney();
   if (!bookings) return <EmptyState message="Booking suggestions are unavailable for this plan." />;
 
   return (
@@ -32,12 +33,12 @@ export default function BookingsSection({ bookings }: { bookings: BookingsResult
                       {i === 0 && <UsedInBudget />}
                     </span>
                     <span className="leader" aria-hidden />
-                    <span className="font-serif text-xl tabular-nums text-ink">{formatUSD(flight.total_price)}</span>
+                    <Price usd={flight.total_price} className="font-serif text-xl text-ink" localClassName="font-sans" />
                   </div>
                   <p className="mt-1 text-sm text-ink-muted">
                     {flight.departure_airport} → {flight.arrival_airport} · {flight.duration} ·{" "}
                     {flight.stops === 0 ? "non-stop" : `${flight.stops} stop${flight.stops > 1 ? "s" : ""}`} ·{" "}
-                    {formatUSD(flight.price_per_person)} per person, return
+                    {money.format(flight.price_per_person)} per person, return
                   </p>
                   <ExternalLink href={flight.search_url} className="mt-2">Live prices on Google Flights</ExternalLink>
                 </li>
@@ -60,11 +61,11 @@ export default function BookingsSection({ bookings }: { bookings: BookingsResult
                       {i === 0 && <UsedInBudget />}
                     </span>
                     <span className="leader" aria-hidden />
-                    <span className="font-serif text-xl tabular-nums text-ink">{formatUSD(hotel.total_price)}</span>
+                    <Price usd={hotel.total_price} className="font-serif text-xl text-ink" localClassName="font-sans" />
                   </div>
                   <p className="mt-1 text-sm text-ink-muted">
                     {hotel.area} · {hotel.type}
-                    {hotel.rating !== null && ` · ${hotel.rating.toFixed(1)}★`} · {formatUSD(hotel.price_per_night)}/night × {hotel.nights}
+                    {hotel.rating !== null && ` · ${hotel.rating.toFixed(1)}★`} · {money.format(hotel.price_per_night)}/night × {hotel.nights}
                     {hotel.rooms > 1 && ` × ${hotel.rooms} rooms`}
                   </p>
                   {hotel.amenities.length > 0 && <p className="mt-1 text-sm text-ink-soft">{hotel.amenities.join(" · ")}</p>}

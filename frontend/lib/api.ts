@@ -1,4 +1,4 @@
-import type { ProgressEvent, TravelPlan, TravelRequest } from "@/lib/types";
+import type { ChatMessage, ChatReply, Itinerary, ProgressEvent, TravelPlan, TravelRequest } from "@/lib/types";
 
 const API_URL = (process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000").replace(/\/$/, "");
 
@@ -89,31 +89,47 @@ function parseSseBlock(block: string): { name: string; data: unknown } | null {
   }
 }
 
-/** Apply a change request; the backend returns a new plan version. */
-export async function refineTravelPlan(id: string, instruction: string, signal?: AbortSignal): Promise<TravelPlan> {
-  const timeout = AbortSignal.timeout(PLAN_TIMEOUT_MS);
+/** JSON request to the API with a timeout and friendly errors. */
+async function callApi<T>(
+  path: string,
+  { method = "GET", body, signal, timeoutMs = 30_000 }: { method?: string; body?: unknown; signal?: AbortSignal; timeoutMs?: number } = {}
+): Promise<T> {
+  const timeout = AbortSignal.timeout(timeoutMs);
   const combined = signal ? AbortSignal.any([signal, timeout]) : timeout;
   try {
-    const response = await fetch(`${API_URL}/api/v1/plans/${encodeURIComponent(id)}/refine`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ instruction }),
+    const response = await fetch(`${API_URL}${path}`, {
+      method,
+      headers: body === undefined ? undefined : { "Content-Type": "application/json" },
+      body: body === undefined ? undefined : JSON.stringify(body),
       signal: combined,
     });
     if (!response.ok) throw await errorFromResponse(response);
-    return (await response.json()) as TravelPlan;
+    return (response.status === 204 ? undefined : await response.json()) as T;
   } catch (error) {
     throw networkError(error, combined);
   }
 }
 
-export async function getTravelPlan(id: string, signal?: AbortSignal): Promise<TravelPlan> {
-  try {
-    const response = await fetch(`${API_URL}/api/v1/plans/${encodeURIComponent(id)}`, { signal });
-    if (!response.ok) throw await errorFromResponse(response);
-    return (await response.json()) as TravelPlan;
-  } catch (error) {
-    if (error instanceof ApiError) throw error;
-    throw networkError(error, signal ?? new AbortController().signal);
-  }
+const planPath = (id: string) => `/api/v1/plans/${encodeURIComponent(id)}`;
+
+export function getTravelPlan(id: string, signal?: AbortSignal): Promise<TravelPlan> {
+  return callApi<TravelPlan>(planPath(id), { signal });
+}
+
+/** Apply a change request; the backend returns a new plan version. */
+export function refineTravelPlan(id: string, instruction: string, signal?: AbortSignal): Promise<TravelPlan> {
+  return callApi<TravelPlan>(`${planPath(id)}/refine`, { method: "POST", body: { instruction }, signal, timeoutMs: PLAN_TIMEOUT_MS });
+}
+
+/** Save a hand-edited itinerary; the backend re-scores it and returns a new plan version. */
+export function saveItinerary(id: string, itinerary: Itinerary, signal?: AbortSignal): Promise<TravelPlan> {
+  return callApi<TravelPlan>(`${planPath(id)}/itinerary`, { method: "PUT", body: { itinerary }, signal, timeoutMs: PLAN_TIMEOUT_MS });
+}
+
+export function askAboutPlan(id: string, messages: ChatMessage[], signal?: AbortSignal): Promise<ChatReply> {
+  return callApi<ChatReply>(`${planPath(id)}/chat`, { method: "POST", body: { messages }, signal, timeoutMs: 90_000 });
+}
+
+export function deleteTravelPlan(id: string, signal?: AbortSignal): Promise<void> {
+  return callApi<void>(planPath(id), { method: "DELETE", signal });
 }

@@ -1,8 +1,13 @@
 """API contract shared by the orchestrator, the HTTP layer and (mirrored in
 `frontend/lib/types.ts`) the frontend.
 
-All money values are USD totals for the whole travelling group unless the
-field name says otherwise (e.g. `price_per_person`, `price_per_night`).
+All money values in responses are USD totals for the whole travelling group
+unless the field name says otherwise (e.g. `price_per_person`,
+`price_per_night`). Models estimate most reliably in USD, so everything is
+planned in USD; `TravelPlan.money` carries the exchange rates the frontend
+uses to show the traveller's own currency and the destination's.
+
+The one exception is `TravelRequest.budget`, which is in `TravelRequest.currency`.
 """
 
 from datetime import date, datetime, timedelta
@@ -53,9 +58,17 @@ class TravelRequest(BaseModel):
     origin: str | None = Field(default=None, max_length=100)
     start_date: date
     end_date: date
-    budget: float = Field(gt=0, le=1_000_000, description="Total budget in USD for the whole group")
+    # Large upper bound because some currencies have big nominal values (IDR, VND);
+    # the USD-equivalent limit is enforced when the budget is converted.
+    budget: float = Field(gt=0, le=1e12, description="Total budget for the whole group, in `currency`")
+    currency: str = Field(default="USD", pattern=r"^[A-Za-z]{3}$", description="ISO 4217 code of the budget")
     travelers: int = Field(ge=1, le=10)
     preferences: Preferences = Field(default_factory=Preferences)
+
+    @field_validator("currency")
+    @classmethod
+    def _upper(cls, value: str) -> str:
+        return value.upper()
 
     @field_validator("destination", "origin")
     @classmethod
@@ -119,6 +132,8 @@ class ResearchResult(BaseModel):
     safety_tips: list[str]
     getting_around: str
     best_time_to_visit: str
+    # ISO 4217 code of the money used at the destination, e.g. "JPY".
+    local_currency: str | None = None
     sources: list[Source] = Field(default_factory=list)
 
 
@@ -264,6 +279,16 @@ class TraceStep(BaseModel):
     detail: str | None = None
 
 
+class MoneyInfo(BaseModel):
+    """Exchange rates frozen at planning time. Rates are units of currency per 1 USD."""
+
+    currency: str
+    usd_rate: float = Field(gt=0)
+    local_currency: str | None = None
+    local_usd_rate: float | None = Field(default=None, gt=0)
+    rates_date: str | None = None
+
+
 class TripSummary(BaseModel):
     destination: str
     origin: str | None
@@ -288,6 +313,8 @@ class TravelPlan(BaseModel):
     itinerary: Itinerary | None = None
     budget: BudgetBreakdown
     validation: Validation | None = None
+    # None only for plans saved before currencies were supported (then: USD).
+    money: MoneyInfo | None = None
     errors: list[AgentError] = Field(default_factory=list)
     # Agent runs for this version, in completion order.
     trace: list[TraceStep] = Field(default_factory=list)
@@ -295,6 +322,37 @@ class TravelPlan(BaseModel):
     version: int = 1
     parent_id: str | None = None
     refinements: list[str] = Field(default_factory=list)
+
+
+class ChatMessage(BaseModel):
+    role: Literal["user", "assistant"]
+    content: str = Field(min_length=1, max_length=2000)
+
+
+class ChatRequest(BaseModel):
+    # The full conversation so far, ending with the user's new question.
+    messages: list[ChatMessage] = Field(min_length=1, max_length=20)
+
+    @model_validator(mode="after")
+    def _ends_with_user(self) -> "ChatRequest":
+        if self.messages[-1].role != "user":
+            raise ValueError("the last message must be from the user")
+        return self
+
+
+class ChatReply(BaseModel):
+    answer: str
+    # Set when the user asked to change the plan; the UI offers to apply it via refine.
+    change_request: str | None = None
+    suggestions: list[str] = Field(default_factory=list)
+    sources: list[Source] = Field(default_factory=list)
+
+
+class ItineraryEdit(BaseModel):
+    """A hand-edited itinerary. Dates and totals are recomputed by the server."""
+
+    itinerary: Itinerary
+    note: str = Field(default="Edited by hand", max_length=200)
 
 
 class RefineRequest(BaseModel):

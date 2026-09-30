@@ -40,6 +40,8 @@ class Settings(BaseSettings):
 
     # Abuse / cost protection for the public planning endpoint.
     rate_limit_per_minute: int = 5
+    # Chat questions are cheap single calls, so they get a separate, higher limit.
+    chat_rate_limit_per_minute: int = 20
     # Each plan makes ~7 Gemini calls (up to 3 at once); keep this low on the free tier.
     max_concurrent_plans: int = 2
     plan_timeout_seconds: int = 240
@@ -80,6 +82,7 @@ AGENT_CONFIG = {
     "validator_agent": {"temperature": 0.1, "max_tokens": 8000, "thinking": "medium"},
     # Used only by the offline evaluation harness (evals/).
     "judge_agent": {"temperature": 0.0, "max_tokens": 4000, "thinking": "low"},
+    "chat_agent": {"temperature": 0.5, "max_tokens": 4000, "thinking": "low"},
 }
 
 VALIDATION_CONFIG = {

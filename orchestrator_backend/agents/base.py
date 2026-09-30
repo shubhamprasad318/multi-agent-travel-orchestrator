@@ -54,6 +54,9 @@ class AgentContext:
     emit: ProgressCallback = field(default=_no_progress)
     # Reference point for TraceStep.started_ms.
     started_at: float = field(default_factory=time.perf_counter)
+    # Returns (USD-based exchange rates, rates date). Defaults to utils.fx.fetch_rates;
+    # replaceable in tests.
+    fx: Callable[[], Awaitable[tuple[dict[str, float], str | None]]] | None = None
 
 
 @dataclass

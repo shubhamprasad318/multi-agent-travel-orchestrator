@@ -16,6 +16,13 @@ from utils.store import MemoryStore
 
 START = date.today() + timedelta(days=60)
 
+# Units per 1 USD, as returned by utils.fx.fetch_rates.
+FAKE_RATES = {"USD": 1.0, "INR": 80.0, "JPY": 150.0, "EUR": 0.9}
+
+
+async def fake_fx() -> tuple[dict[str, float], str | None]:
+    return FAKE_RATES, "test-date"
+
 
 def make_request(**overrides: Any) -> TravelRequest:
     data: dict[str, Any] = {
@@ -62,6 +69,7 @@ def default_responses(request: TravelRequest) -> dict[str, Any]:
             safety_tips=["Very safe"],
             getting_around="Metro",
             best_time_to_visit="Spring",
+            local_currency="jpy",
         ),
         "WeatherDraft": WeatherDraft(
             summary="Mild.",
@@ -148,6 +156,6 @@ def make_ctx(settings: Settings) -> Callable[..., tuple[AgentContext, FakeGenera
         responses = default_responses(request)
         responses.update(overrides)
         generator = FakeGenerator(responses)
-        return AgentContext(settings=settings, store=MemoryStore(), generate=generator), generator
+        return AgentContext(settings=settings, store=MemoryStore(), generate=generator, fx=fake_fx), generator
 
     return factory
