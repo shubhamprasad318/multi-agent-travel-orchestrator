@@ -9,7 +9,7 @@ from agents.booking_agent import BookingDraft, FlightDraft, HotelDraft
 from agents.itinerary_agent import DayDraft, ItineraryDraft, SlotDraft
 from agents.research_agent import ResearchDraft
 from agents.validator_agent import ValidatorDraft
-from agents.weather_agent import DayDraft as WeatherDayDraft, WeatherDraft
+from agents.weather_agent import DayDraft as WeatherDayDraft, PackingItemDraft, WeatherDraft
 from config import Settings
 from schemas import Activity, Meal, Neighborhood, Source, TravelRequest
 from utils.store import MemoryStore
@@ -84,7 +84,7 @@ def default_responses(request: TravelRequest) -> dict[str, Any]:
                 )
                 for i in range(request.days)
             ],
-            packing_list=["Umbrella"],
+            packing_items=[PackingItemDraft(item="Umbrella", category="gear", reason="Showers are common")],
             advisories=[],
         ),
         "ActivitiesDraft": ActivitiesDraft(

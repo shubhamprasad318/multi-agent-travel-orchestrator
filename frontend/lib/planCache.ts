@@ -1,3 +1,4 @@
+import { offlineEntryForTrip, saveOffline } from "@/lib/offline";
 import { recordTrip } from "@/lib/tripsIndex";
 import type { TravelPlan } from "@/lib/types";
 
@@ -13,6 +14,9 @@ export function cachePlan(plan: TravelPlan): void {
   }
   // Every plan the user opens also appears on the "My trips" page.
   recordTrip(plan);
+  // A trip saved for offline use keeps its newest version offline too.
+  const offline = offlineEntryForTrip(plan);
+  if (offline && offline.id !== plan.id && plan.created_at >= offline.saved_at) saveOffline(plan);
 }
 
 export function getCachedPlan(id: string): TravelPlan | null {

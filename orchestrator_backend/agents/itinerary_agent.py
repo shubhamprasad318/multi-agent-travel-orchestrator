@@ -2,7 +2,7 @@ from datetime import timedelta
 
 from pydantic import BaseModel, Field
 
-from agents.base import SYSTEM_BASE, AgentContext, AgentOutputError, user_input
+from agents.base import SYSTEM_BASE, AgentContext, AgentOutputError, route_text, user_input
 from schemas import (
     ActivitiesResult,
     BookingsResult,
@@ -16,8 +16,9 @@ from schemas import (
     Validation,
     WeatherResult,
 )
-from utils.budget import ground_budget
-from utils.geo import plausible_points
+from utils.budget import ground_budget, selected_hotels
+from utils.geo import plausible_points_by_group
+from utils.slots import carry_over_slot_ids
 
 
 class SlotDraft(BaseModel):
@@ -53,7 +54,8 @@ SYSTEM = SYSTEM_BASE + (
     "USD; slot costs cover tickets and local transport, meal costs cover food. Keep the sum of "
     "all slot and meal costs within the on-the-ground budget. Use empty weather_note when "
     "there is nothing to say. Give the latitude and longitude of each slot's location as "
-    "accurately as you can."
+    "accurately as you can. On a multi-city trip, each day is spent in the city given for it: "
+    "on a travel day, plan the transfer in the morning and only light plans in the new city."
 )
 
 SLOTS_PER_PACE = {
@@ -67,16 +69,37 @@ def _weather_lines(weather: WeatherResult | None) -> str:
     if not weather:
         return "(no weather data)"
     return "\n".join(
-        f"{d.date}: {d.condition}, {d.temp_min_c:.0f}-{d.temp_max_c:.0f}°C, rain {d.precip_chance or 0}%"
+        f"{d.date}{f' ({d.location})' if d.location else ''}: {d.condition}, "
+        f"{d.temp_min_c:.0f}-{d.temp_max_c:.0f}°C, rain {d.precip_chance or 0}%"
         for d in weather.days
     )
+
+
+def day_city_lines(request: TravelRequest, bookings: BookingsResult | None) -> str:
+    """Where each day of a multi-city trip is spent, and how the traveller moves on."""
+    moves = {t.date: t for t in bookings.transfers} if bookings else {}
+    lines = []
+    for index, city in enumerate(request.day_cities()):
+        day_date = request.start_date + timedelta(days=index)
+        move = moves.get(day_date)
+        how = f" — travel day: {move.mode} from {move.from_city} ({move.duration})" if move else ""
+        lines.append(f"Day {index + 1} ({day_date}): {user_input(city)}{how}")
+    return "\n".join(lines)
+
+
+def accommodation_text(bookings: BookingsResult | None) -> str:
+    hotels = selected_hotels(bookings)
+    if not hotels:
+        return "(not chosen)"
+    return "; ".join(f"{f'{h.city}: ' if h.city else ''}{h.name} in {h.area}" for h in hotels)
 
 
 def _activity_lines(activities: ActivitiesResult | None) -> str:
     if not activities:
         return "(no curated activities — choose well-known ones)"
     return "\n".join(
-        f"- [{a.category}] {a.name} ({a.location}; ~${a.estimated_cost:.0f}; {a.duration}; best {a.best_time})"
+        f"- [{a.category}] {a.name} ({f'{a.city}, ' if a.city else ''}{a.location}; ~${a.estimated_cost:.0f}; "
+        f"{a.duration}; best {a.best_time})"
         for a in activities.activities
     )
 
@@ -122,15 +145,14 @@ async def run(
     instruction: str | None = None,
 ) -> Itinerary:
     on_ground = ground_budget(request, bookings)
-    hotel = bookings.hotels[0] if bookings and bookings.hotels else None
-    base = f"{hotel.name} in {hotel.area}" if hotel else "(not chosen)"
+    cities = f"Where each day is spent:\n{day_city_lines(request, bookings)}\n" if request.stops else ""
     user = (
-        f"Destination: {user_input(request.destination)}\n"
+        f"{route_text(request)}\n{cities}"
         f"Dates: {request.start_date} to {request.end_date} — exactly {request.days} days, numbered 1-{request.days}\n"
         f"Travellers: {request.travelers}\n"
         f"Interests: {user_input(', '.join(request.preferences.interests) or 'general sightseeing')}\n"
         f"Pace: {SLOTS_PER_PACE[request.preferences.pace]}\n"
-        f"Accommodation base: {base}\n"
+        f"Accommodation base: {accommodation_text(bookings)}\n"
         f"On-the-ground budget (activities + food + local transport, whole group): ${on_ground:,.0f} "
         f"(about ${on_ground / request.days:,.0f} per day)\n"
         f"Neighbourhoods: {', '.join(n.name for n in research.neighborhoods) if research else '(unknown)'}\n\n"
@@ -146,8 +168,11 @@ async def run(
         raise AgentOutputError("itinerary contained no valid days")
 
     ordered = sorted(by_day.items())
+    day_cities = request.day_cities()
+    # Checked per city: a multi-city trip's cities can be far apart.
+    slot_cities = [day_cities[n - 1] for n, d in ordered for _ in d.slots]
     all_slots = [s for _, d in ordered for s in d.slots]
-    keep_coords = iter(plausible_points([(s.lat, s.lng) for s in all_slots]))
+    keep_coords = iter(plausible_points_by_group([(s.lat, s.lng) for s in all_slots], slot_cities))
 
     def to_slot(s: SlotDraft) -> Slot:
         ok = next(keep_coords)
@@ -165,6 +190,7 @@ async def run(
         DayPlan(
             day=n,
             date=request.start_date + timedelta(days=n - 1),
+            city=day_cities[n - 1] if request.stops else None,
             theme=d.theme,
             slots=[to_slot(s) for s in d.slots],
             meals=d.meals,
@@ -174,4 +200,5 @@ async def run(
         )
         for n, d in ordered
     ]
-    return Itinerary(days=days, highlights=draft.highlights, tips=draft.tips)
+    # Stops kept from the previous version keep their ids (and so their votes and comments).
+    return carry_over_slot_ids(previous, Itinerary(days=days, highlights=draft.highlights, tips=draft.tips))

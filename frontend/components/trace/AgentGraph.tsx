@@ -11,7 +11,9 @@ export interface NodeState {
   step?: TraceStep;
 }
 
-type GraphNode = AgentName | "start" | "end";
+// The day re-planner runs on an existing plan, never while planning, so it isn't in the graph.
+type GraphAgent = Exclude<AgentName, "replan">;
+type GraphNode = GraphAgent | "start" | "end";
 
 // Mirrors the LangGraph topology in orchestrator_backend/orchestrator.py.
 const NODES: Record<GraphNode, { x: number; y: number; label: string }> = {
@@ -153,7 +155,7 @@ export default function AgentGraph({ nodes, finished = false, theme = "dark", cl
       ))}
 
       {(Object.keys(NODES) as GraphNode[])
-        .filter((node): node is AgentName => node !== "start" && node !== "end")
+        .filter((node): node is GraphAgent => node !== "start" && node !== "end")
         .map((node) => {
           const { x, y, label } = NODES[node];
           const state = nodes[node];

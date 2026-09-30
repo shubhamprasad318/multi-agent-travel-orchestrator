@@ -1,6 +1,6 @@
 from pydantic import BaseModel
 
-from agents.base import GROUNDED_HINT, SYSTEM_BASE, AgentContext, user_input
+from agents.base import GROUNDED_HINT, SYSTEM_BASE, AgentContext, match_city, route_text, user_input
 from schemas import ActivitiesResult, Activity, ResearchResult, TravelRequest
 
 
@@ -12,7 +12,9 @@ SYSTEM = SYSTEM_BASE + (
     " You are an activity curator. Recommend 12-18 real, specific activities (named places, "
     "tours, venues or dishes — not generic advice) spread across categories, weighted toward "
     "the traveller's interests. `estimated_cost` is the total for the whole group in USD "
-    "(0 for free activities)."
+    "(0 for free activities). For a multi-city trip, spread them across the cities in "
+    "proportion to the nights spent and set `city` to the city's name exactly as given; "
+    "otherwise leave `city` empty."
 ) + GROUNDED_HINT
 
 
@@ -22,7 +24,7 @@ async def run(ctx: AgentContext, request: TravelRequest, research: ResearchResul
     if research:
         context = "Destination highlights: " + "; ".join(research.highlights) + "\n"
     user = (
-        f"Destination: {user_input(request.destination)}\n"
+        f"{route_text(request)}\n"
         f"Dates: {request.start_date} to {request.end_date}\n"
         f"Group size: {request.travelers}\n"
         f"Interests: {user_input(interests)}\n"
@@ -31,4 +33,5 @@ async def run(ctx: AgentContext, request: TravelRequest, research: ResearchResul
         f"{context}"
     )
     draft = await ctx.generate("activity_agent", ActivitiesDraft, SYSTEM, user, grounded=True)
-    return ActivitiesResult(activities=draft.activities)
+    cities = [stop.destination for stop in request.stops]
+    return ActivitiesResult(activities=[a.model_copy(update={"city": match_city(a.city, cities)}) for a in draft.activities])

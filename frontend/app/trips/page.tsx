@@ -3,10 +3,12 @@
 import { useEffect, useMemo, useState } from "react";
 import Image from "next/image";
 import Link from "next/link";
-import { ArrowRight, Search } from "lucide-react";
+import { ArrowRight, Cloud, Search } from "lucide-react";
+import { SignInPrompt } from "@/components/layout/AccountMenu";
 import CompareTrips from "@/components/trips/CompareTrips";
 import TripCard from "@/components/trips/TripCard";
-import { ApiError, deleteTravelPlan } from "@/lib/api";
+import { ApiError, deleteTravelPlan, listMyTrips, removeMember, saveTrips, unsaveTrip } from "@/lib/api";
+import { useAuthEnabled, useUser } from "@/lib/auth";
 import { toISODate } from "@/lib/format";
 import { groupFamilies, listTrips, removeTrip, subscribeTrips, type TripEntry, type TripFamily } from "@/lib/tripsIndex";
 import { cn } from "@/lib/utils";
@@ -36,9 +38,70 @@ function sortFamilies(families: TripFamily[], sort: SortKey): TripFamily[] {
   });
 }
 
+/**
+ * Signed out: trips from this browser's history. Signed in: the account's trips
+ * (own, shared with you, saved), after saving this browser's trips to the account.
+ */
+function useTrips(): { entries: TripEntry[]; loaded: boolean; synced: boolean; reload: () => void; loadError: string | null } {
+  const user = useUser();
+  const [local, setLocal] = useState<TripEntry[]>([]);
+  const [remote, setRemote] = useState<TripEntry[] | null>(null);
+  const [localLoaded, setLocalLoaded] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [version, setVersion] = useState(0);
+
+  // localStorage is only available in the browser, so load after mount.
+  useEffect(() => {
+    const refresh = () => setLocal(listTrips());
+    refresh();
+    setLocalLoaded(true);
+    return subscribeTrips(refresh);
+  }, []);
+
+  useEffect(() => {
+    if (!user) {
+      setRemote(null);
+      return;
+    }
+    const controller = new AbortController();
+    setLoadError(null);
+    (async () => {
+      try {
+        let trips = await listMyTrips(controller.signal);
+        const known = new Set(trips.map((t) => t.id));
+        const unsynced = listTrips()
+          .map((e) => e.id)
+          .filter((id) => !known.has(id))
+          .slice(0, 100);
+        if (unsynced.length > 0) {
+          await saveTrips(unsynced);
+          trips = await listMyTrips(controller.signal);
+        }
+        setRemote(trips);
+      } catch (err) {
+        if (controller.signal.aborted) return;
+        setLoadError(err instanceof Error ? err.message : "Couldn't load your trips.");
+        setRemote(null);
+      }
+    })();
+    return () => controller.abort();
+  }, [user, version]);
+
+  const signedInAndLoaded = user !== null && remote !== null;
+  return {
+    entries: signedInAndLoaded ? remote : local,
+    // Signed in: wait for the account's list, unless it failed (then show this browser's).
+    loaded: localLoaded && (user === null || remote !== null || loadError !== null),
+    synced: signedInAndLoaded,
+    reload: () => setVersion((v) => v + 1),
+    loadError,
+  };
+}
+
 export default function TripsPage() {
-  const [entries, setEntries] = useState<TripEntry[]>([]);
-  const [loaded, setLoaded] = useState(false);
+  const { entries, loaded, synced, reload, loadError } = useTrips();
+  const user = useUser();
+  const authEnabled = useAuthEnabled();
   const [query, setQuery] = useState("");
   const [sort, setSort] = useState<SortKey>("newest");
   const [compareMode, setCompareMode] = useState(false);
@@ -46,14 +109,6 @@ export default function TripsPage() {
   const [comparing, setComparing] = useState(false);
   const [hidden, setHidden] = useState<Set<string>>(new Set());
   const [error, setError] = useState<{ message: string; family: TripFamily } | null>(null);
-
-  // localStorage is only available in the browser, so load after mount.
-  useEffect(() => {
-    const refresh = () => setEntries(listTrips());
-    refresh();
-    setLoaded(true);
-    return subscribeTrips(refresh);
-  }, []);
 
   const families = useMemo(() => groupFamilies(entries.filter((e) => !hidden.has(e.id))), [entries, hidden]);
 
@@ -84,20 +139,29 @@ export default function TripsPage() {
     // Optimistic: hide now, restore if the server refuses.
     setHidden((prev) => new Set([...prev, ...ids]));
     setSelected((prev) => prev.filter((id) => !ids.includes(id)));
+    const { latest } = family;
+    const root = latest.root_id ?? family.versions[family.versions.length - 1].id;
     try {
-      await Promise.all(
-        ids.map((id) =>
-          deleteTravelPlan(id).catch((err) => {
-            // Already gone on the server (expired or deleted elsewhere): fine.
-            if (err instanceof ApiError && err.status === 404) return;
-            throw err;
-          })
-        )
-      );
+      if (latest.role === "saved") {
+        await unsaveTrip(root);
+      } else if (latest.role === "member" && user) {
+        await removeMember(latest.id, user.id);
+      } else {
+        await Promise.all(
+          ids.map((id) =>
+            deleteTravelPlan(id).catch((err) => {
+              // Already gone on the server (expired or deleted elsewhere): fine.
+              if (err instanceof ApiError && err.status === 404) return;
+              throw err;
+            })
+          )
+        );
+      }
       ids.forEach(removeTrip);
+      if (synced) reload();
     } catch (err) {
       setError({
-        message: `Couldn't delete your trip to ${family.latest.destination}. ${err instanceof Error ? err.message : ""}`.trim(),
+        message: `Couldn't remove your trip to ${family.latest.destination}. ${err instanceof Error ? err.message : ""}`.trim(),
         family,
       });
     } finally {
@@ -122,8 +186,9 @@ export default function TripsPage() {
           <p className="eyebrow">Your travel desk</p>
           <h1 className="mt-3 text-5xl md:text-6xl text-ink">My trips</h1>
           {families.length > 0 && (
-            <p className="mt-3 text-ink-soft">
-              {families.length} trip{families.length === 1 ? "" : "s"} planned on this device
+            <p className="mt-3 flex items-center gap-2 text-ink-soft">
+              {synced && <Cloud className="h-4 w-4 text-teal" aria-hidden />}
+              {families.length} trip{families.length === 1 ? "" : "s"} {synced ? "in your account" : "planned on this device"}
             </p>
           )}
         </div>
@@ -134,6 +199,21 @@ export default function TripsPage() {
           Plan a new trip <ArrowRight className="h-4 w-4" aria-hidden />
         </Link>
       </header>
+
+      {loadError && (
+        <p role="alert" className="mt-6 border-l-4 border-ochre bg-ochre-light/50 px-4 py-3 text-sm text-ink">
+          Couldn&apos;t load the trips in your account ({loadError}). Showing the ones on this device.
+        </p>
+      )}
+      {!user && authEnabled && (
+        <div className="mt-8 flex flex-wrap items-start gap-6 border border-rule bg-paper-deep p-6">
+          <div className="max-w-md">
+            <p className="font-serif text-xl text-ink">Take your trips everywhere</p>
+            <p className="mt-1 text-sm text-ink-soft">Sign in to keep these trips on all your devices and plan them with friends.</p>
+          </div>
+          <SignInPrompt compact />
+        </div>
+      )}
 
       {families.length === 0 ? (
         <EmptyState />

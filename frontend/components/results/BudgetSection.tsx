@@ -19,6 +19,19 @@ const CATEGORIES = [
 
 type CategoryKey = (typeof CATEGORIES)[number]["key"];
 
+/** Category totals. Transfers between cities (multi-city trips) count as travel, with flights. */
+function categoryValues(budget: BudgetBreakdown): Record<CategoryKey, number> {
+  return {
+    flights: budget.flights + (budget.transfers ?? 0),
+    lodging: budget.lodging,
+    activities: budget.activities,
+    food: budget.food,
+  };
+}
+
+const categoryLabel = (key: CategoryKey, label: string, budget: BudgetBreakdown) =>
+  key === "flights" && (budget.transfers ?? 0) > 0 ? "Flights & transfers" : label;
+
 interface Tip {
   x: number;
   y: number;
@@ -103,12 +116,7 @@ function HeroFigure({ budget }: { budget: BudgetBreakdown }) {
 function CompositionBar({ budget }: { budget: BudgetBreakdown }) {
   const money = useMoney();
   const [tip, setTip] = useState<Tip | null>(null);
-  const values: Record<CategoryKey, number> = {
-    flights: budget.flights,
-    lodging: budget.lodging,
-    activities: budget.activities,
-    food: budget.food,
-  };
+  const values = categoryValues(budget);
   const total = budget.estimated_total;
   // Scale to whichever is larger so the budget marker always fits.
   const scale = Math.max(budget.total_budget, total, 1);
@@ -133,11 +141,11 @@ function CompositionBar({ budget }: { budget: BudgetBreakdown }) {
                   i === present.length - 1 && "rounded-r"
                 )}
                 style={{ flexGrow: values[c.key], flexBasis: 0, background: c.color }}
-                aria-label={`${c.label}: ${money.format(values[c.key])}, ${share(values[c.key])}% of the total`}
-                onMouseMove={(e) => setTip({ x: e.clientX, y: e.clientY, lines: [c.label, `${money.format(values[c.key])} · ${share(values[c.key])}%`] })}
+                aria-label={`${categoryLabel(c.key, c.label, budget)}: ${money.format(values[c.key])}, ${share(values[c.key])}% of the total`}
+                onMouseMove={(e) => setTip({ x: e.clientX, y: e.clientY, lines: [categoryLabel(c.key, c.label, budget), `${money.format(values[c.key])} · ${share(values[c.key])}%`] })}
                 onFocus={(e) => {
                   const r = e.currentTarget.getBoundingClientRect();
-                  setTip({ x: r.left + r.width / 2, y: r.top, lines: [c.label, `${money.format(values[c.key])} · ${share(values[c.key])}%`] });
+                  setTip({ x: r.left + r.width / 2, y: r.top, lines: [categoryLabel(c.key, c.label, budget), `${money.format(values[c.key])} · ${share(values[c.key])}%`] });
                 }}
                 onBlur={() => setTip(null)}
               />
@@ -157,7 +165,7 @@ function CompositionBar({ budget }: { budget: BudgetBreakdown }) {
           <li key={c.key} className="flex items-baseline gap-3">
             <span className="h-3 w-3 shrink-0 translate-y-0.5 rounded-sm" style={{ background: c.color }} aria-hidden />
             <span className="flex-1">
-              <span className="block text-sm text-ink-soft">{c.label}</span>
+              <span className="block text-sm text-ink-soft">{categoryLabel(c.key, c.label, budget)}</span>
               <span className="block text-lg font-semibold tabular-nums text-ink">
                 {money.format(values[c.key])} <span className="text-sm font-normal text-ink-muted">{share(values[c.key])}%</span>
               </span>
@@ -281,7 +289,7 @@ function DailyTable({ itinerary }: { itinerary: Itinerary }) {
 function SplitTable({ budget, travelers }: { budget: BudgetBreakdown; travelers: number }) {
   const money = useMoney();
   const rows = [
-    ...CATEGORIES.map((c) => ({ label: c.label, color: c.color, total: budget[c.key] })),
+    ...CATEGORIES.map((c) => ({ label: categoryLabel(c.key, c.label, budget), color: c.color, total: categoryValues(budget)[c.key] })),
   ];
   return (
     <table className="mt-6 w-full text-sm">

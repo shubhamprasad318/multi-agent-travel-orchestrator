@@ -8,6 +8,7 @@ from evals.judge import Criterion, JudgeDraft, judge_plan
 from evals.run_evals import build_request, compare, format_report, load_cases, parse_args, record_for, summarize
 from orchestrator import create_plan
 from tests.conftest import itinerary_draft, make_request
+from tests.test_multicity import multicity_overrides, multicity_request
 
 
 def _checks(plan) -> dict[str, bool | None]:
@@ -23,7 +24,22 @@ async def test_good_plan_passes_all_checks(make_ctx):
     request = make_request()
     ctx, _ = make_ctx(request)
     plan = await create_plan(ctx, request)
-    assert all(passed for passed in _checks(plan).values())
+    results = _checks(plan)
+    # Multi-city checks don't apply to a single destination.
+    assert results.pop("cities_follow_route") is None
+    assert all(passed for passed in results.values())
+
+
+async def test_multicity_route_check(make_ctx):
+    request = multicity_request()
+    overrides = multicity_overrides()
+    ctx, _ = make_ctx(request, **overrides)
+    assert _checks(await create_plan(ctx, request))["cities_follow_route"] is True
+
+    overrides["BookingDraft"].transfers = []
+    ctx, _ = make_ctx(request, **overrides)
+    result = next(c for c in run_checks(await create_plan(ctx, request)) if c.name == "cities_follow_route")
+    assert result.passed is False and "0 transfers" in result.detail
 
 
 async def test_checks_catch_bad_plans(make_ctx):
@@ -68,9 +84,10 @@ async def test_judge_clamps_scores(make_ctx):
 
 def test_all_cases_build_valid_requests():
     cases = load_cases()
-    assert len(cases) == 15
-    assert len({c["id"] for c in cases}) == 15
+    assert len(cases) == 16
+    assert len({c["id"] for c in cases}) == 16
     requests = [build_request(c) for c in cases]
+    assert any(len(r.stops) > 1 for r in requests)
     assert any(r.days == 1 for r in requests)
     assert any(r.origin is None for r in requests)
     assert {r.preferences.pace for r in requests} == {"relaxed", "moderate", "fast"}

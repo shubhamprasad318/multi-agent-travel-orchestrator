@@ -10,8 +10,14 @@ const MAX_ENTRIES = 100;
 export interface TripEntry {
   id: string;
   parent_id: string | null;
+  /** First version's id; missing on entries saved before it existed. */
+  root_id?: string | null;
   version: number;
   destination: string;
+  /** Number of cities on a multi-city trip (0 for one destination). */
+  stops?: number;
+  /** Only for trips listed from the account: how the user is part of it. */
+  role?: "owner" | "member" | "saved";
   start_date: string;
   end_date: string;
   days: number;
@@ -53,8 +59,10 @@ export function toTripEntry(plan: TravelPlan): TripEntry {
   return {
     id: plan.id,
     parent_id: plan.parent_id ?? null,
+    root_id: plan.root_id ?? null,
     version: plan.version ?? 1,
     destination: plan.trip.destination,
+    stops: plan.trip.stops?.length ?? 0,
     start_date: plan.trip.start_date,
     end_date: plan.trip.end_date,
     days: plan.trip.days,
@@ -115,6 +123,7 @@ export interface TripFamily {
 export function groupFamilies(entries: TripEntry[]): TripFamily[] {
   const byId = new Map(entries.map((e) => [e.id, e]));
   const rootOf = (entry: TripEntry): string => {
+    if (entry.root_id) return entry.root_id;
     let current = entry;
     const seen = new Set<string>();
     while (current.parent_id && byId.has(current.parent_id) && !seen.has(current.id)) {

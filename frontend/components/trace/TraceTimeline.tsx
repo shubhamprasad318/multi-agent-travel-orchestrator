@@ -10,6 +10,7 @@ export const AGENT_LABEL: Record<AgentName, string> = {
   itinerary: "Planner",
   validator: "Editor",
   revision: "Second draft",
+  replan: "Day re-planner",
 };
 
 /** Gantt-style view: overlapping bars show which agents ran in parallel. */

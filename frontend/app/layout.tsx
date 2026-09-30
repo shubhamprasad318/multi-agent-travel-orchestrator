@@ -1,10 +1,11 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { DM_Sans, Fraunces } from "next/font/google";
 import "./globals.css";
 import { cn } from "@/lib/utils";
 import { BRAND } from "@/lib/brand";
 import Navbar from "@/components/layout/Navbar";
 import Footer from "@/components/layout/Footer";
+import ServiceWorker from "@/components/layout/ServiceWorker";
 
 const sans = DM_Sans({ subsets: ["latin"], variable: "--font-sans" });
 // Variable serif with optical sizing and a "soft" axis for the editorial headlines.
@@ -14,6 +15,13 @@ export const metadata: Metadata = {
   title: `${BRAND.name} · ${BRAND.tagline}`,
   description: "Research, weather, activities, bookings and a day-by-day itinerary, planned and checked by a team of AI agents.",
   keywords: ["travel", "AI", "planning", "itinerary", "vacation"],
+  applicationName: BRAND.name,
+  appleWebApp: { capable: true, title: BRAND.short, statusBarStyle: "default" },
+  icons: { apple: "/icons/apple-touch-icon.png" },
+};
+
+export const viewport: Viewport = {
+  themeColor: "#F6F1E7",
 };
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
@@ -33,6 +41,7 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
           </main>
           <Footer />
         </div>
+        <ServiceWorker />
       </body>
     </html>
   );

@@ -85,6 +85,26 @@ def coordinates_present(plan: TravelPlan) -> CheckResult:
     return CheckResult("coordinates_present", share >= MIN_COORDINATE_COVERAGE, f"{located}/{len(slots)} located")
 
 
+def cities_follow_route(plan: TravelPlan) -> CheckResult:
+    """Multi-city: every day is in the right city, one hotel per city, a transfer per move."""
+    if not plan.request.stops:
+        return CheckResult("cities_follow_route", None, "single destination")
+    days = plan.itinerary.days if plan.itinerary else []
+    expected = plan.request.day_cities()[: len(days)]
+    wrong = [d.day for d, city in zip(days, expected) if d.city != city]
+    hotel_cities = {h.city for h in plan.bookings.hotels} if plan.bookings else set()
+    missing_hotels = [s.destination for s in plan.request.stops if s.destination not in hotel_cities]
+    transfers = len(plan.bookings.transfers) if plan.bookings else 0
+    problems = []
+    if wrong:
+        problems.append(f"wrong city on days {wrong}")
+    if missing_hotels:
+        problems.append(f"no hotel in {missing_hotels}")
+    if transfers != len(plan.request.stops) - 1:
+        problems.append(f"{transfers} transfers for {len(plan.request.stops)} cities")
+    return CheckResult("cities_follow_route", not problems, "; ".join(problems))
+
+
 def flights_only_with_origin(plan: TravelPlan) -> CheckResult:
     if plan.bookings is None:
         return CheckResult("flights_only_with_origin", None, "no bookings section")
@@ -111,6 +131,7 @@ ALL_CHECKS = [
     budget_respected,
     no_repeated_activities,
     coordinates_present,
+    cities_follow_route,
     flights_only_with_origin,
     grounded_sources,
 ]

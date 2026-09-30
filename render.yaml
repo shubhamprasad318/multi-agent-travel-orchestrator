@@ -20,3 +20,12 @@ services:
         sync: false
       - key: GEMINI_MODEL
         value: gemini-3.8-flash
+      # Optional: Google sign-in. The OAuth web client id (same value as the
+      # frontend's NEXT_PUBLIC_GOOGLE_CLIENT_ID); AUTH_SECRET signs sessions.
+      - key: GOOGLE_CLIENT_ID
+        sync: false
+      - key: AUTH_SECRET
+        generateValue: true
+      # Optional: free recent flight fares (Travelpayouts / Aviasales Data API).
+      - key: TRAVELPAYOUTS_TOKEN
+        sync: false

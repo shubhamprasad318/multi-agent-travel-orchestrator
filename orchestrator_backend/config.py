@@ -48,6 +48,21 @@ class Settings(BaseSettings):
     llm_timeout_seconds: int = 90
     max_trip_days: int = 21
 
+    # Google sign-in (optional). The OAuth *web* client id from Google Cloud
+    # console; the frontend uses the same id. Without it, accounts are off.
+    google_client_id: str | None = None
+    # Signs session tokens. Set a long random value in production; if empty, a
+    # random one is made at startup (everyone is signed out on restart).
+    auth_secret: str | None = None
+    session_days: int = 30
+
+    # Real flight fares (optional, free): a Travelpayouts API token
+    # (https://www.travelpayouts.com, Aviasales Data API). Without it, flight
+    # prices are the booking agent's estimates.
+    travelpayouts_token: str | None = None
+    # Optional Travelpayouts affiliate marker added to Aviasales links.
+    travelpayouts_marker: str | None = None
+
     @field_validator("cors_origins", mode="before")
     @classmethod
     def _parse_origins(cls, value: Any) -> Any:
@@ -66,6 +81,10 @@ class Settings(BaseSettings):
     def has_llm(self) -> bool:
         return bool(self.google_api_key)
 
+    @property
+    def auth_enabled(self) -> bool:
+        return bool(self.google_client_id)
+
 
 @lru_cache
 def get_settings() -> Settings:
@@ -83,6 +102,7 @@ AGENT_CONFIG = {
     # Used only by the offline evaluation harness (evals/).
     "judge_agent": {"temperature": 0.0, "max_tokens": 4000, "thinking": "low"},
     "chat_agent": {"temperature": 0.5, "max_tokens": 4000, "thinking": "low"},
+    "replan_agent": {"temperature": 0.6, "max_tokens": 8000, "thinking": "medium"},
 }
 
 VALIDATION_CONFIG = {

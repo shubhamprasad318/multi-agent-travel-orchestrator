@@ -17,6 +17,7 @@ export default function Footer() {
             <li><Link href="/plan" className="hover:text-terracotta">Plan a trip</Link></li>
             <li><Link href="/#agents" className="hover:text-terracotta">The agents</Link></li>
             <li><Link href="/#how-it-works" className="hover:text-terracotta">How it works</Link></li>
+            <li><Link href="/evals" className="hover:text-terracotta">Quality evaluations</Link></li>
           </ul>
         </div>
         <div>

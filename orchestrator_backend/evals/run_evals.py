@@ -46,6 +46,7 @@ def build_request(case: dict, today: date | None = None) -> TravelRequest:
     start = (today or date.today()) + timedelta(days=case["start_offset_days"])
     return TravelRequest(
         destination=case["destination"],
+        stops=case.get("stops", []),
         origin=case.get("origin"),
         start_date=start,
         end_date=start + timedelta(days=case["days"] - 1),

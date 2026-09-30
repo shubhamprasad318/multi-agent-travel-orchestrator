@@ -10,6 +10,7 @@ uses to show the traveller's own currency and the destination's.
 The one exception is `TravelRequest.budget`, which is in `TravelRequest.currency`.
 """
 
+import uuid
 from datetime import date, datetime, timedelta
 from typing import Literal
 
@@ -26,7 +27,12 @@ Period = Literal["morning", "afternoon", "evening"]
 MealType = Literal["breakfast", "lunch", "dinner"]
 BudgetStatus = Literal["Within Budget", "Slightly Over", "Over Budget", "Unknown"]
 ValidationStatus = Literal["Approved", "Needs Review", "Rejected"]
-AgentName = Literal["research", "weather", "activity", "booking", "itinerary", "validator", "revision"]
+AgentName = Literal["research", "weather", "activity", "booking", "itinerary", "validator", "revision", "replan"]
+PackingCategory = Literal["clothing", "gear", "documents", "health", "tech", "other"]
+
+# Multi-city trips: at most this many cities, joined like "Tokyo → Kyoto" for display.
+MAX_STOPS = 5
+ROUTE_JOINER = " → "
 
 
 # --------------------------------------------------------------------------- #
@@ -50,11 +56,27 @@ class Preferences(BaseModel):
         return seen
 
 
+class TripStop(BaseModel):
+    """One city of a multi-city trip and the nights spent there."""
+
+    destination: str = Field(min_length=2, max_length=60)
+    nights: int = Field(ge=1, le=30)
+
+    @field_validator("destination")
+    @classmethod
+    def _strip(cls, value: str) -> str:
+        return " ".join(value.split())
+
+
 class TravelRequest(BaseModel):
     # Older clients also send `duration`; it is derived from the dates here.
     model_config = ConfigDict(extra="ignore")
 
-    destination: str = Field(min_length=2, max_length=100)
+    # Required for a single destination. For multi-city trips it may be omitted:
+    # it's set to the route ("Tokyo → Kyoto → Osaka").
+    destination: str = Field(default="", max_length=320)
+    # Multi-city trips: the cities in travel order. Empty for a single destination.
+    stops: list[TripStop] = Field(default_factory=list, max_length=MAX_STOPS)
     origin: str | None = Field(default=None, max_length=100)
     start_date: date
     end_date: date
@@ -80,10 +102,19 @@ class TravelRequest(BaseModel):
 
     @model_validator(mode="after")
     def _check_dates(self, info: ValidationInfo) -> "TravelRequest":
-        if not self.destination or len(self.destination) < 2:
-            raise ValueError("destination is required")
         if self.end_date < self.start_date:
             raise ValueError("end_date must be on or after start_date")
+        if len(self.stops) == 1:
+            # A one-city route is just a destination.
+            self.destination, self.stops = self.stops[0].destination, []
+        if not self.stops and len(self.destination or "") < 2:
+            raise ValueError("destination is required")
+        if self.stops:
+            if any(len(stop.destination) < 2 for stop in self.stops):
+                raise ValueError("every stop needs a destination")
+            if sum(stop.nights for stop in self.stops) != self.nights:
+                raise ValueError(f"the stops' nights must add up to the trip's {self.nights} nights")
+            self.destination = ROUTE_JOINER.join(stop.destination for stop in self.stops)
         # Saved plans are reloaded for refinement even after their dates pass.
         if (info.context or {}).get("stored"):
             return self
@@ -106,6 +137,25 @@ class TravelRequest(BaseModel):
     @property
     def rooms(self) -> int:
         return max(1, -(-self.travelers // 2))
+
+    def day_cities(self) -> list[str]:
+        """The city of each day (index 0 is day 1).
+
+        A day belongs to the city where that night is spent, so the day you move
+        is the first day in the new city; the last day stays in the last city.
+        """
+        if not self.stops:
+            return [self.destination] * self.days
+        return [stop.destination for stop in self.stops for _ in range(stop.nights)] + [self.stops[-1].destination]
+
+    def stop_dates(self) -> list[tuple[TripStop, date, date]]:
+        """(stop, check-in, check-out) for each stop of a multi-city trip."""
+        result, check_in = [], self.start_date
+        for stop in self.stops:
+            check_out = check_in + timedelta(days=stop.nights)
+            result.append((stop, check_in, check_out))
+            check_in = check_out
+        return result
 
 
 # --------------------------------------------------------------------------- #
@@ -143,6 +193,15 @@ class WeatherDay(BaseModel):
     temp_min_c: float
     temp_max_c: float
     precip_chance: int | None = Field(default=None, ge=0, le=100)
+    # Multi-city trips: the city this day's weather is for.
+    location: str | None = None
+
+
+class PackingItem(BaseModel):
+    item: str
+    category: PackingCategory = "other"
+    # Why it's worth packing for this trip, e.g. "rain on day 3".
+    reason: str | None = None
 
 
 class WeatherResult(BaseModel):
@@ -153,6 +212,8 @@ class WeatherResult(BaseModel):
     days: list[WeatherDay]
     packing_list: list[str]
     advisories: list[str] = Field(default_factory=list)
+    # The packing list with categories; empty for plans made before it existed.
+    packing_items: list[PackingItem] = Field(default_factory=list)
 
 
 class Activity(BaseModel):
@@ -163,6 +224,8 @@ class Activity(BaseModel):
     duration: str
     best_time: str
     location: str
+    # Multi-city trips: the city the activity is in.
+    city: str | None = None
 
 
 class ActivitiesResult(BaseModel):
@@ -178,6 +241,11 @@ class Flight(BaseModel):
     price_per_person: float = Field(ge=0)
     total_price: float = Field(ge=0)
     search_url: str
+    # "estimate": the model's estimate; "recent_fare": a real fare other travellers
+    # found recently for this route (Travelpayouts cache), with its own dates.
+    price_source: Literal["estimate", "recent_fare"] = "estimate"
+    departure_at: str | None = None
+    return_at: str | None = None
 
 
 class Hotel(BaseModel):
@@ -191,17 +259,38 @@ class Hotel(BaseModel):
     total_price: float = Field(ge=0)
     amenities: list[str]
     search_url: str
+    # Multi-city trips: the stop this hotel is for.
+    city: str | None = None
+
+
+class Transfer(BaseModel):
+    """Getting from one city of a multi-city trip to the next."""
+
+    from_city: str
+    to_city: str
+    date: date
+    mode: str
+    duration: str
+    cost: float = Field(ge=0, description="USD for the whole group")
+    notes: str | None = None
 
 
 class BookingsResult(BaseModel):
     flights: list[Flight]
     hotels: list[Hotel]
+    transfers: list[Transfer] = Field(default_factory=list)
     notes: list[str] = Field(default_factory=list)
     # Prices come from the model, not a live booking API.
     prices_are_estimates: bool = True
 
 
+def new_slot_id() -> str:
+    return uuid.uuid4().hex[:12]
+
+
 class Slot(BaseModel):
+    # Stable across versions of a trip, so votes and comments stay attached.
+    id: str = Field(default_factory=new_slot_id, pattern=r"^[A-Za-z0-9_-]{1,40}$")
     period: Period
     start_time: str
     activity: str
@@ -222,6 +311,8 @@ class Meal(BaseModel):
 class DayPlan(BaseModel):
     day: int
     date: date
+    # Multi-city trips: the city this day is spent in.
+    city: str | None = None
     theme: str
     slots: list[Slot]
     meals: list[Meal]
@@ -240,6 +331,8 @@ class BudgetBreakdown(BaseModel):
     total_budget: float
     flights: float
     lodging: float
+    # Multi-city trips: trains, buses or flights between the cities.
+    transfers: float = 0
     activities: float
     food: float
     estimated_total: float
@@ -291,6 +384,7 @@ class MoneyInfo(BaseModel):
 
 class TripSummary(BaseModel):
     destination: str
+    stops: list[TripStop] = Field(default_factory=list)
     origin: str | None
     start_date: date
     end_date: date
@@ -322,6 +416,11 @@ class TravelPlan(BaseModel):
     version: int = 1
     parent_id: str | None = None
     refinements: list[str] = Field(default_factory=list)
+    # The first version's id: votes, comments, members and checklists belong to
+    # the trip, not to one version. None on plans saved before it existed.
+    root_id: str | None = None
+    # User id of the signed-in creator; None for plans made while signed out.
+    owner_id: str | None = None
 
 
 class ChatMessage(BaseModel):
@@ -353,6 +452,18 @@ class ItineraryEdit(BaseModel):
 
     itinerary: Itinerary
     note: str = Field(default="Edited by hand", max_length=200)
+
+
+class ReplanDayRequest(BaseModel):
+    reason: str = Field(min_length=3, max_length=300, description="What changed, e.g. 'heavy rain all day'")
+
+    @field_validator("reason")
+    @classmethod
+    def _strip(cls, value: str) -> str:
+        value = " ".join(value.split())
+        if len(value) < 3:
+            raise ValueError("reason is too short")
+        return value
 
 
 class RefineRequest(BaseModel):

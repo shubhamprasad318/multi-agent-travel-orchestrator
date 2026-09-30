@@ -7,6 +7,7 @@ import { ChevronDown, Loader2, Trash2 } from "lucide-react";
 import { fetchDestinationImage, type DestinationImage } from "@/lib/destinationImage";
 import { moneyFor } from "@/lib/money";
 import type { TripFamily } from "@/lib/tripsIndex";
+import { primaryPlace, shortRoute } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { BUDGET_TONE, STATUS_TONE, relativeTime, tripDates } from "./format";
 
@@ -48,7 +49,7 @@ function useLazyImage(destination: string) {
   useEffect(() => {
     if (!visible) return;
     const controller = new AbortController();
-    fetchDestinationImage(destination, controller.signal).then(setImage);
+    fetchDestinationImage(primaryPlace(destination), controller.signal).then(setImage);
     return () => controller.abort();
   }, [visible, destination]);
 
@@ -65,6 +66,10 @@ export default function TripCard({ family, compareMode, selected, selectionFull,
   const earlier = versions.length - 1;
   const href = `/results?id=${latest.id}`;
   const checkboxId = `compare-${latest.id}`;
+  // Someone else's trip is left or un-saved, never deleted.
+  const action = latest.role === "member" ? "Leave" : latest.role === "saved" ? "Remove" : "Delete";
+  const question =
+    action === "Leave" ? "Leave this trip?" : action === "Remove" ? "Remove from your trips?" : `Delete${earlier > 0 ? ` all ${versions.length} versions` : ""}?`;
 
   const handleDelete = async () => {
     setDeleting(true);
@@ -122,20 +127,25 @@ export default function TripCard({ family, compareMode, selected, selectionFull,
             v{latest.version}
           </span>
         )}
+        {(latest.role === "member" || latest.role === "saved") && (
+          <span className="absolute bottom-3 left-3 rounded-full bg-paper/95 px-2.5 py-1 text-[11px] font-medium text-ink">
+            {latest.role === "member" ? "Planning together" : "Saved"}
+          </span>
+        )}
       </div>
 
       <div className="flex flex-1 flex-col pt-4">
         <div className="flex items-baseline justify-between gap-3">
           <h2 className="text-2xl text-ink">
             <Link href={href} className="hover:text-terracotta focus-visible:text-terracotta">
-              {latest.destination}
+              {shortRoute(latest.destination)}
             </Link>
           </h2>
           <span className="shrink-0 text-xs text-ink-muted">{relativeTime(latest.created_at)}</span>
         </div>
         <p className="mt-1 text-sm text-ink-soft">
-          {tripDates(latest.start_date, latest.end_date)} · {latest.days} day{latest.days === 1 ? "" : "s"} · {latest.travelers}{" "}
-          traveler{latest.travelers === 1 ? "" : "s"}
+          {tripDates(latest.start_date, latest.end_date)} · {latest.days} day{latest.days === 1 ? "" : "s"}
+          {latest.stops ? ` · ${latest.stops} cities` : ""} · {latest.travelers} traveler{latest.travelers === 1 ? "" : "s"}
         </p>
 
         <dl className="mt-4 grid grid-cols-2 border-y border-rule">
@@ -188,8 +198,8 @@ export default function TripCard({ family, compareMode, selected, selectionFull,
             Open itinerary
           </Link>
           {confirming ? (
-            <div className="flex items-center gap-2 text-sm" role="group" aria-label="Confirm delete">
-              <span className="text-ink-soft">Delete{earlier > 0 ? ` all ${versions.length} versions` : ""}?</span>
+            <div className="flex items-center gap-2 text-sm" role="group" aria-label={`Confirm ${action.toLowerCase()}`}>
+              <span className="text-ink-soft">{question}</span>
               <button
                 type="button"
                 onClick={handleDelete}
@@ -197,7 +207,7 @@ export default function TripCard({ family, compareMode, selected, selectionFull,
                 className="inline-flex items-center gap-1 rounded-full bg-terracotta px-3 py-1.5 text-paper hover:bg-terracotta-dark disabled:opacity-60"
               >
                 {deleting && <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />}
-                Delete
+                {action}
               </button>
               <button type="button" onClick={() => setConfirming(false)} disabled={deleting} className="link-underline text-ink-soft">
                 Keep
@@ -208,10 +218,10 @@ export default function TripCard({ family, compareMode, selected, selectionFull,
               type="button"
               onClick={() => setConfirming(true)}
               className="inline-flex items-center gap-1.5 text-sm text-ink-muted hover:text-terracotta"
-              aria-label={`Delete trip to ${latest.destination}`}
+              aria-label={`${action} trip to ${latest.destination}`}
             >
               <Trash2 className="h-4 w-4" aria-hidden />
-              Delete
+              {action}
             </button>
           )}
         </div>

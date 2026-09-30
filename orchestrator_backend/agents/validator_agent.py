@@ -1,6 +1,6 @@
 from pydantic import BaseModel, Field
 
-from agents.base import SYSTEM_BASE, AgentContext, user_input
+from agents.base import SYSTEM_BASE, AgentContext, route_text, user_input
 from config import VALIDATION_CONFIG
 from schemas import (
     ActivitiesResult,
@@ -78,7 +78,7 @@ async def run(
         )
 
     days_text = "\n".join(
-        f"Day {d.day} ({d.date}) {d.theme}: "
+        f"Day {d.day} ({d.date}{f', {d.city}' if d.city else ''}) {d.theme}: "
         + "; ".join(f"{s.period} {s.activity} @ {s.location} ${s.cost:.0f}" for s in d.slots)
         + (f" | note: {d.weather_note}" if d.weather_note else "")
         for d in itinerary.days
@@ -89,12 +89,12 @@ async def run(
         else "(no weather data)"
     )
     hotel_text = (
-        "; ".join(f"{h.name} ({h.area}) ${h.price_per_night:.0f}/night" for h in bookings.hotels)
+        "; ".join(f"{h.name} ({f'{h.city}, ' if h.city else ''}{h.area}) ${h.price_per_night:.0f}/night" for h in bookings.hotels)
         if bookings and bookings.hotels
         else "(none)"
     )
     user = (
-        f"Destination: {user_input(request.destination)}; {request.days} days; {request.travelers} traveller(s)\n"
+        f"{route_text(request)}; {request.days} days; {request.travelers} traveller(s)\n"
         f"Interests: {user_input(', '.join(request.preferences.interests) or 'general')}; pace: {request.preferences.pace}\n"
         f"Accommodation options: {hotel_text}\n"
         f"Flights found: {len(bookings.flights) if bookings else 0} (origin given: {bool(request.origin)})\n"

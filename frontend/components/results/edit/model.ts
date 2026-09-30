@@ -1,13 +1,16 @@
 import type { DayPlan, Itinerary, Slot } from "@/lib/types";
 
 // Draft model for the itinerary editor. dnd-kit needs stable, unique ids for
-// every draggable item and container, which the API types don't have.
+// every draggable item and container. Stops keep their server ids through an
+// edit (so votes and comments stay attached); new stops get a fresh random id.
 
 export type EditSlot = Slot & { id: string };
 export type EditDay = Omit<DayPlan, "slots"> & { slots: EditSlot[] };
 
-let counter = 0;
-export const newSlotId = () => `slot-${++counter}`;
+export const newSlotId = () =>
+  typeof crypto !== "undefined" && "randomUUID" in crypto
+    ? crypto.randomUUID().replace(/-/g, "").slice(0, 12)
+    : `s${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
 
 export const containerId = (day: number) => `day-${day}`;
 export const isContainerId = (id: string) => id.startsWith("day-");
@@ -18,7 +21,7 @@ export function toDraft(itinerary: Itinerary): EditDay[] {
     ...day,
     meals: day.meals.map((m) => ({ ...m })),
     backup_options: [...day.backup_options],
-    slots: day.slots.map((slot) => ({ ...slot, id: newSlotId() })),
+    slots: day.slots.map((slot) => ({ ...slot, id: slot.id ?? newSlotId() })),
   }));
 }
 
@@ -39,13 +42,12 @@ export function fromDraft(days: EditDay[], original: Itinerary): Itinerary {
       ...day,
       theme: day.theme.trim() || `Day ${day.day}`,
       total_cost: Math.round(dayTotal(day) * 100) / 100,
-      // eslint-disable-next-line @typescript-eslint/no-unused-vars
-      slots: day.slots.map(({ id, ...slot }) => ({ ...slot, activity: slot.activity.trim(), cost: Math.max(0, slot.cost) })),
+      slots: day.slots.map((slot) => ({ ...slot, activity: slot.activity.trim(), cost: Math.max(0, slot.cost) })),
     })),
   };
 }
 
-/** Stable comparison key: ignores the editor-only ids. */
+/** Stable comparison key: ignores ids, which don't change what the plan says. */
 export function signature(days: EditDay[]): string {
   return JSON.stringify(
     days.map((d) => ({

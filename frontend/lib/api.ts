@@ -1,4 +1,20 @@
-import type { ChatMessage, ChatReply, Itinerary, ProgressEvent, TravelPlan, TravelRequest } from "@/lib/types";
+import type {
+  ChatMessage,
+  ChatReply,
+  Checklist,
+  Collab,
+  EvalRun,
+  EvalRunSummary,
+  Itinerary,
+  ProgressEvent,
+  Session,
+  TravelPlan,
+  TravelRequest,
+  TripComment,
+  TripListItem,
+  VoteTally,
+} from "@/lib/types";
+import { getToken, setSession } from "@/lib/session";
 
 const API_URL = (process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000").replace(/\/$/, "");
 
@@ -12,7 +28,14 @@ export class ApiError extends Error {
   }
 }
 
-async function errorFromResponse(response: Response): Promise<ApiError> {
+function withAuth(headers: Record<string, string>): Record<string, string> {
+  const token = getToken();
+  return token ? { ...headers, Authorization: `Bearer ${token}` } : headers;
+}
+
+async function errorFromResponse(response: Response, sentToken = false): Promise<ApiError> {
+  // Our session expired or the server forgot it: sign out so the UI offers sign-in again.
+  if (response.status === 401 && sentToken) setSession(null);
   const body = await response.json().catch(() => null);
   const detail = typeof body?.detail === "string" ? body.detail : null;
   const fallback: Record<number, string> = {
@@ -43,11 +66,11 @@ export async function createTravelPlan(
   try {
     const response = await fetch(`${API_URL}/api/v1/plan/stream`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: withAuth({ "Content-Type": "application/json" }),
       body: JSON.stringify(request),
       signal: combined,
     });
-    if (!response.ok) throw await errorFromResponse(response);
+    if (!response.ok) throw await errorFromResponse(response, Boolean(getToken()));
     if (!response.body) throw new ApiError("Empty response from server");
 
     const reader = response.body.pipeThrough(new TextDecoderStream()).getReader();
@@ -97,13 +120,14 @@ async function callApi<T>(
   const timeout = AbortSignal.timeout(timeoutMs);
   const combined = signal ? AbortSignal.any([signal, timeout]) : timeout;
   try {
+    const token = getToken();
     const response = await fetch(`${API_URL}${path}`, {
       method,
-      headers: body === undefined ? undefined : { "Content-Type": "application/json" },
+      headers: withAuth(body === undefined ? {} : { "Content-Type": "application/json" }),
       body: body === undefined ? undefined : JSON.stringify(body),
       signal: combined,
     });
-    if (!response.ok) throw await errorFromResponse(response);
+    if (!response.ok) throw await errorFromResponse(response, Boolean(token));
     return (response.status === 204 ? undefined : await response.json()) as T;
   } catch (error) {
     throw networkError(error, combined);
@@ -132,4 +156,97 @@ export function askAboutPlan(id: string, messages: ChatMessage[], signal?: Abort
 
 export function deleteTravelPlan(id: string, signal?: AbortSignal): Promise<void> {
   return callApi<void>(planPath(id), { method: "DELETE", signal });
+}
+
+/** Re-plan one day (e.g. "heavy rain all day"); the backend returns a new plan version. */
+export function replanDay(id: string, day: number, reason: string, signal?: AbortSignal): Promise<TravelPlan> {
+  return callApi<TravelPlan>(`${planPath(id)}/days/${day}/replan`, { method: "POST", body: { reason }, signal, timeoutMs: PLAN_TIMEOUT_MS });
+}
+
+/** A copy of any plan that the signed-in user owns (needed to plan it with friends). */
+export function copyPlan(id: string): Promise<TravelPlan> {
+  return callApi<TravelPlan>(`${planPath(id)}/copy`, { method: "POST", timeoutMs: 60_000 });
+}
+
+// --- Accounts ---------------------------------------------------------------
+
+export interface AuthConfig {
+  enabled: boolean;
+  google_client_id: string | null;
+}
+
+export function getAuthConfig(signal?: AbortSignal): Promise<AuthConfig> {
+  return callApi<AuthConfig>("/api/v1/auth/config", { signal, timeoutMs: 10_000 });
+}
+
+/** Exchange a Google ID token for our session and remember it. */
+export async function signInWithGoogle(credential: string): Promise<Session> {
+  const session = await callApi<Session>("/api/v1/auth/google", { method: "POST", body: { credential } });
+  setSession(session);
+  return session;
+}
+
+export function listMyTrips(signal?: AbortSignal): Promise<TripListItem[]> {
+  return callApi<TripListItem[]>("/api/v1/me/trips", { signal });
+}
+
+/** Bookmark trips (any version's id) to the account; returns saved root ids. */
+export function saveTrips(planIds: string[]): Promise<string[]> {
+  return callApi<string[]>("/api/v1/me/saved", { method: "PUT", body: { plan_ids: planIds } });
+}
+
+export function unsaveTrip(rootId: string): Promise<void> {
+  return callApi<void>(`/api/v1/me/saved/${encodeURIComponent(rootId)}`, { method: "DELETE" });
+}
+
+// --- Planning together --------------------------------------------------------
+
+export function getCollab(id: string, signal?: AbortSignal): Promise<Collab> {
+  return callApi<Collab>(`${planPath(id)}/collab`, { signal });
+}
+
+export function createInvite(id: string): Promise<{ invite_code: string }> {
+  return callApi<{ invite_code: string }>(`${planPath(id)}/invite`, { method: "POST" });
+}
+
+export function disableInvite(id: string): Promise<void> {
+  return callApi<void>(`${planPath(id)}/invite`, { method: "DELETE" });
+}
+
+export function joinTrip(id: string, code: string): Promise<Collab> {
+  return callApi<Collab>(`${planPath(id)}/join`, { method: "POST", body: { code } });
+}
+
+export function removeMember(id: string, memberId: string): Promise<void> {
+  return callApi<void>(`${planPath(id)}/members/${encodeURIComponent(memberId)}`, { method: "DELETE" });
+}
+
+export function voteOnStop(id: string, slotId: string, value: -1 | 0 | 1): Promise<VoteTally> {
+  return callApi<VoteTally>(`${planPath(id)}/votes/${encodeURIComponent(slotId)}`, { method: "PUT", body: { value } });
+}
+
+export function addComment(id: string, slotId: string, text: string): Promise<TripComment> {
+  return callApi<TripComment>(`${planPath(id)}/comments`, { method: "POST", body: { slot_id: slotId, text } });
+}
+
+export function deleteComment(id: string, commentId: string): Promise<void> {
+  return callApi<void>(`${planPath(id)}/comments/${encodeURIComponent(commentId)}`, { method: "DELETE" });
+}
+
+export function getChecklist(id: string, signal?: AbortSignal): Promise<Checklist> {
+  return callApi<Checklist>(`${planPath(id)}/checklist`, { signal });
+}
+
+export function saveChecklist(id: string, checklist: Checklist): Promise<Checklist> {
+  return callApi<Checklist>(`${planPath(id)}/checklist`, { method: "PUT", body: checklist });
+}
+
+// --- Evaluation runs ----------------------------------------------------------
+
+export function listEvalRuns(signal?: AbortSignal): Promise<EvalRunSummary[]> {
+  return callApi<EvalRunSummary[]>("/api/v1/evals", { signal });
+}
+
+export function getEvalRun(id: string, signal?: AbortSignal): Promise<EvalRun> {
+  return callApi<EvalRun>(`/api/v1/evals/${encodeURIComponent(id)}`, { signal });
 }

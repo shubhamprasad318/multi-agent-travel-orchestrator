@@ -52,7 +52,8 @@ function starterQuestions(plan: TravelPlan): string[] {
   ];
 }
 
-export default function TripChat({ plan }: { plan: TravelPlan }) {
+/** `canApply`: whether this user may change the plan (so the "apply this change" button shows). */
+export default function TripChat({ plan, canApply = true }: { plan: TravelPlan; canApply?: boolean }) {
   const [open, setOpen] = useState(false);
   const [turns, setTurns] = useState<Turn[]>([]);
   const [draft, setDraft] = useState("");
@@ -214,6 +215,7 @@ export default function TripChat({ plan }: { plan: TravelPlan }) {
                         disabled={pending}
                         latest={i === turns.length - 1}
                         onNavigate={() => setOpen(false)}
+                        canApply={canApply}
                       />
                     </li>
                   )
@@ -294,6 +296,7 @@ function AssistantTurn({
   disabled,
   latest,
   onNavigate,
+  canApply,
 }: {
   turn: Turn;
   plan: TravelPlan;
@@ -301,6 +304,7 @@ function AssistantTurn({
   disabled: boolean;
   latest: boolean;
   onNavigate: () => void;
+  canApply: boolean;
 }) {
   const reply = turn.reply;
   const paragraphs = turn.content.split(/\n{2,}/).filter((p) => p.trim());
@@ -329,7 +333,7 @@ function AssistantTurn({
         </ul>
       )}
 
-      {reply?.change_request && <ApplyChange plan={plan} instruction={reply.change_request} onNavigate={onNavigate} />}
+      {reply?.change_request && canApply && <ApplyChange plan={plan} instruction={reply.change_request} onNavigate={onNavigate} />}
 
       {latest && reply && reply.suggestions.length > 0 && (
         <div className="mt-3 flex flex-wrap gap-2">

@@ -4,6 +4,7 @@ from pydantic import BaseModel, Field
 
 from agents.base import SYSTEM_BASE, AgentContext, user_input
 from schemas import ChatMessage, ChatReply, Source, TravelPlan
+from utils.budget import selected_hotels
 
 # Keep prompts bounded: only the most recent turns are sent.
 MAX_TURNS = 12
@@ -45,9 +46,13 @@ def plan_brief(plan: TravelPlan) -> str:
     ]
     if plan.money and plan.money.local_currency:
         lines.append(f"Local currency at destination: {plan.money.local_currency}")
-    if plan.bookings and plan.bookings.hotels:
-        hotel = plan.bookings.hotels[0]
-        lines.append(f"Hotel: {hotel.name} in {hotel.area}")
+    for hotel in selected_hotels(plan.bookings):
+        lines.append(f"Hotel{f' in {hotel.city}' if hotel.city else ''}: {hotel.name} in {hotel.area}")
+    if plan.bookings and plan.bookings.transfers:
+        lines.append(
+            "Transfers: "
+            + "; ".join(f"{t.date} {t.from_city} to {t.to_city} by {t.mode} ({t.duration}, {fmt(t.cost)})" for t in plan.bookings.transfers)
+        )
     if plan.bookings and plan.bookings.flights:
         flight = plan.bookings.flights[0]
         lines.append(f"Flight: {flight.airline} {flight.departure_airport}-{flight.arrival_airport}")
@@ -55,7 +60,7 @@ def plan_brief(plan: TravelPlan) -> str:
         for day in plan.itinerary.days:
             stops = "; ".join(f"{s.start_time} {s.activity} @ {s.location} ({fmt(s.cost)})" for s in day.slots)
             meals = "; ".join(f"{m.type}: {m.suggestion}" for m in day.meals)
-            lines.append(f"Day {day.day} ({day.date}, {day.theme}): {stops}. Meals: {meals}")
+            lines.append(f"Day {day.day} ({day.date}{f', in {day.city}' if day.city else ''}, {day.theme}): {stops}. Meals: {meals}")
     if plan.weather:
         lines.append(
             "Weather: "

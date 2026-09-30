@@ -5,6 +5,9 @@
            └─> weather ─────────────────┘                ▲          │
                                                          └─ revision <┘ (score too low, once)
 
+After a plan exists, `refine_plan` (whole itinerary), `replan_day` (one day)
+and `edit_plan` (hand edits) each save the result as a new version.
+
 Each agent run is wrapped by `_run_step`, which records a `TraceStep` (timing,
 tokens, sources, outcome) and turns a failure into an `AgentError` so the rest
 of the plan still gets built.
@@ -19,7 +22,7 @@ from typing import Annotated, Any, Awaitable, Callable, TypedDict
 
 from langgraph.graph import END, START, StateGraph
 
-from agents import activity_agent, booking_agent, itinerary_agent, research_agent, validator_agent, weather_agent
+from agents import activity_agent, booking_agent, itinerary_agent, replan_agent, research_agent, validator_agent, weather_agent
 from agents.base import AgentContext, LLMUnavailableError, StepUsage, current_step
 from config import VALIDATION_CONFIG
 from schemas import (
@@ -42,6 +45,7 @@ from schemas import (
 from utils.budget import compute_budget
 from utils.fx import MAX_BUDGET_USD, FxUnavailableError, UnsupportedCurrencyError, fetch_rates, rate_for
 from utils.logger import get_logger
+from utils.slots import unique_slot_ids
 
 logger = get_logger(__name__)
 
@@ -324,7 +328,7 @@ def build_graph(ctx: AgentContext):
     return graph.compile()
 
 
-async def create_plan(ctx: AgentContext, request: TravelRequest) -> TravelPlan:
+async def create_plan(ctx: AgentContext, request: TravelRequest, owner_id: str | None = None) -> TravelPlan:
     ctx.started_at = time.perf_counter()
     planning, rates, rates_date = await _planning_request(ctx, request)
     graph = build_graph(ctx)
@@ -346,14 +350,18 @@ async def create_plan(ctx: AgentContext, request: TravelRequest) -> TravelPlan:
     if validation is not None:
         validation = validation.model_copy(update={"revisions": state.get("revisions", 0)})
 
+    plan_id = uuid.uuid4().hex
     return TravelPlan(
-        id=uuid.uuid4().hex,
+        id=plan_id,
+        root_id=plan_id,
+        owner_id=owner_id,
         status="partial" if errors else "complete",
         created_at=datetime.now(timezone.utc),
         # The request as the traveller sent it (budget in their currency).
         request=request,
         trip=TripSummary(
             destination=request.destination,
+            stops=request.stops,
             origin=request.origin,
             start_date=request.start_date,
             end_date=request.end_date,
@@ -404,6 +412,7 @@ async def _new_version(
             "trace": [*steps, validator_step],
             "version": plan.version + 1,
             "parent_id": plan.id,
+            "root_id": plan.root_id or plan.id,
             "refinements": [*plan.refinements, note],
         }
     )
@@ -458,10 +467,12 @@ def normalize_edited_itinerary(plan: TravelPlan, edited: Itinerary) -> Itinerary
     """Server-side truth for a hand-edited itinerary: real dates, recomputed totals."""
     request = plan.request
     days = sorted(edited.days, key=lambda d: d.day)[: request.days]
+    cities = request.day_cities()
     normalized = [
         DayPlan(
             day=index + 1,
             date=request.start_date + timedelta(days=index),
+            city=cities[index] if request.stops else None,
             theme=day.theme.strip() or f"Day {index + 1}",
             slots=day.slots,
             meals=day.meals,
@@ -471,7 +482,7 @@ def normalize_edited_itinerary(plan: TravelPlan, edited: Itinerary) -> Itinerary
         )
         for index, day in enumerate(days)
     ]
-    return Itinerary(days=normalized, highlights=edited.highlights, tips=edited.tips)
+    return unique_slot_ids(Itinerary(days=normalized, highlights=edited.highlights, tips=edited.tips))
 
 
 async def edit_plan(ctx: AgentContext, plan: TravelPlan, edited: Itinerary, note: str) -> TravelPlan:
@@ -481,3 +492,33 @@ async def edit_plan(ctx: AgentContext, plan: TravelPlan, edited: Itinerary, note
     if not any(day.slots for day in itinerary.days):
         raise PlanningError("The itinerary needs at least one stop.", status_code=422)
     return await _with_timeout(ctx, _new_version(ctx, plan, itinerary, note, []), "We couldn't save your edits. Please try again.")
+
+
+async def replan_day(ctx: AgentContext, plan: TravelPlan, day: int, reason: str) -> TravelPlan:
+    """Re-plan one day of an existing plan (e.g. "heavy rain forecast") as a new version.
+
+    Every other day is kept exactly as it was; the whole plan is re-scored.
+    """
+    ctx.started_at = time.perf_counter()
+    if plan.itinerary is None or not any(d.day == day for d in plan.itinerary.days):
+        raise PlanningError(f"Day {day} is not part of this plan.", status_code=404)
+    planning = stored_planning_request(plan)
+    itinerary = plan.itinerary
+
+    async def replan() -> dict[str, Any]:
+        new_day, summary = await replan_agent.run(
+            ctx, planning, itinerary, day, reason, plan.weather, plan.activities, plan.bookings
+        )
+        return {"day": new_day, "_detail": f"Day {day}: {summary or reason}"}
+
+    async def run() -> TravelPlan:
+        update, step, error = await _run_step(ctx, "replan", replan)
+        if error is not None or update is None:
+            if isinstance(error, LLMUnavailableError):
+                raise PlanningError(str(error), status_code=503)
+            raise PlanningError(f"We couldn't re-plan day {day}. Try describing the change differently.")
+        days = [update["day"] if d.day == day else d for d in itinerary.days]
+        updated = unique_slot_ids(itinerary.model_copy(update={"days": days}))
+        return await _new_version(ctx, plan, updated, f"Day {day} re-planned: {reason}", [step])
+
+    return await _with_timeout(ctx, run(), f"We couldn't re-plan day {day}. Please try again.")

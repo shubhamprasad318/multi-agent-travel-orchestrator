@@ -1,14 +1,15 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { ArrowRight } from "lucide-react";
+import { ArrowRight, Plus, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { daysBetween, toISODate } from "@/lib/format";
 import { CURRENCIES, currencySymbol, detectCurrency } from "@/lib/money";
 import type { Accommodation, Pace, TravelRequest } from "@/lib/types";
 
-// Must match max_trip_days on the backend.
+// Must match max_trip_days and MAX_STOPS on the backend.
 const MAX_TRIP_DAYS = 21;
+const MAX_STOPS = 5;
 
 const INTEREST_OPTIONS = [
   "Culture", "Food", "History", "Art", "Nature",
@@ -33,8 +34,15 @@ interface PlanFormProps {
   initialDestination?: string;
 }
 
+interface StopState {
+  destination: string;
+  nights: string;
+}
+
 interface FormState {
   destination: string;
+  /** Multi-city trips: two or more cities in travel order; empty for one destination. */
+  stops: StopState[];
   origin: string;
   start_date: string;
   end_date: string;
@@ -47,8 +55,10 @@ interface FormState {
 }
 
 function toFormState(initial?: TravelRequest | null, destination?: string): FormState {
+  const stops = destination ? [] : (initial?.stops ?? []);
   return {
-    destination: destination ?? initial?.destination ?? "",
+    destination: destination ?? (stops.length > 1 ? "" : initial?.destination ?? ""),
+    stops: stops.length > 1 ? stops.map((s) => ({ destination: s.destination, nights: String(s.nights) })) : [],
     origin: initial?.origin ?? "",
     start_date: initial?.start_date ?? "",
     end_date: initial?.end_date ?? "",
@@ -62,9 +72,30 @@ function toFormState(initial?: TravelRequest | null, destination?: string): Form
   };
 }
 
+function tripNights(form: FormState): number | null {
+  return form.start_date && form.end_date && form.end_date >= form.start_date ? daysBetween(form.start_date, form.end_date) : null;
+}
+
+/** Once the dates are known, share the nights between route cities the user hasn't filled in yet. */
+function withSplitNights(form: FormState): FormState {
+  const nights = tripNights(form);
+  if (form.stops.length === 0 || nights === null || nights < form.stops.length || form.stops.some((s) => s.nights.trim())) return form;
+  const base = Math.floor(nights / form.stops.length);
+  const extra = nights % form.stops.length;
+  return { ...form, stops: form.stops.map((s, i) => ({ ...s, nights: String(base + (i < extra ? 1 : 0)) })) };
+}
+
 function validate(form: FormState, today: string): Partial<Record<keyof FormState, string>> {
   const errors: Partial<Record<keyof FormState, string>> = {};
-  if (form.destination.trim().length < 2) errors.destination = "Where are you going?";
+  if (form.stops.length > 0) {
+    const nights = tripNights(form);
+    const assigned = form.stops.reduce((sum, s) => sum + (Number(s.nights) || 0), 0);
+    if (form.stops.some((s) => s.destination.trim().length < 2)) errors.stops = "Name every city on the route.";
+    else if (form.stops.some((s) => !Number.isInteger(Number(s.nights)) || Number(s.nights) < 1))
+      errors.stops = "Each city needs at least one night.";
+    else if (nights !== null && assigned !== nights)
+      errors.stops = `The nights add up to ${assigned}, but the trip has ${nights} night${nights === 1 ? "" : "s"}.`;
+  } else if (form.destination.trim().length < 2) errors.destination = "Where are you going?";
   if (!form.start_date) errors.start_date = "Pick a start date.";
   else if (form.start_date < today) errors.start_date = "Start date can't be in the past.";
   if (!form.end_date) errors.end_date = "Pick an end date.";
@@ -92,7 +123,37 @@ export default function PlanForm({ onSubmit, initialValues, initialDestination }
       ? daysBetween(form.start_date, form.end_date) + 1
       : null;
 
-  const update = <K extends keyof FormState>(key: K, value: FormState[K]) => setForm((prev) => ({ ...prev, [key]: value }));
+  const update = <K extends keyof FormState>(key: K, value: FormState[K]) =>
+    setForm((prev) => {
+      const next = { ...prev, [key]: value };
+      return key === "start_date" || key === "end_date" ? withSplitNights(next) : next;
+    });
+
+  const nights = tripNights(form);
+  const assignedNights = form.stops.reduce((sum, s) => sum + (Number(s.nights) || 0), 0);
+
+  const updateStop = (index: number, patch: Partial<StopState>) =>
+    setForm((prev) => ({ ...prev, stops: prev.stops.map((s, i) => (i === index ? { ...s, ...patch } : s)) }));
+
+  const addStop = () =>
+    setForm((prev) => {
+      const current = prev.stops.length > 0 ? prev.stops : [{ destination: prev.destination, nights: "" }];
+      const used = current.reduce((sum, s) => sum + (Number(s.nights) || 0), 0);
+      const left = nights === null ? "" : String(Math.max(1, nights - used));
+      // Starting a route: split the nights between the first two cities.
+      if (prev.stops.length === 0 && nights !== null && nights >= 2) {
+        const first = Math.ceil(nights / 2);
+        return { ...prev, stops: [{ destination: prev.destination, nights: String(first) }, { destination: "", nights: String(nights - first) }] };
+      }
+      return { ...prev, stops: [...current, { destination: "", nights: left }] };
+    });
+
+  const removeStop = (index: number) =>
+    setForm((prev) => {
+      const stops = prev.stops.filter((_, i) => i !== index);
+      // Back to one city: it's a plain destination again.
+      return stops.length === 1 ? { ...prev, destination: stops[0].destination, stops: [] } : { ...prev, stops };
+    });
 
   const toggleInterest = (interest: string) =>
     setForm((prev) => ({
@@ -104,8 +165,11 @@ export default function PlanForm({ onSubmit, initialValues, initialDestination }
     e.preventDefault();
     setSubmitted(true);
     if (Object.keys(errors).length > 0) return;
+    const stops = form.stops.map((s) => ({ destination: s.destination.trim(), nights: Number(s.nights) }));
     onSubmit({
-      destination: form.destination.trim(),
+      // For a route the server sets the destination to "A → B → C" itself.
+      destination: stops.length > 0 ? stops.map((s) => s.destination).join(" → ") : form.destination.trim(),
+      ...(stops.length > 0 ? { stops } : {}),
       origin: form.origin.trim() || null,
       start_date: form.start_date,
       end_date: form.end_date,
@@ -124,18 +188,92 @@ export default function PlanForm({ onSubmit, initialValues, initialDestination }
     <form onSubmit={handleSubmit} noValidate className="space-y-12">
       <FormSection number="01" title="Where and when">
         <div className="grid gap-8 sm:grid-cols-2">
-          <Field id="destination" label="Destination" error={shown.destination} className="sm:col-span-2">
-            <input
-              id="destination"
-              placeholder="Kyoto, Japan"
-              value={form.destination}
-              onChange={(e) => update("destination", e.target.value)}
-              maxLength={100}
-              autoComplete="off"
-              aria-invalid={!!shown.destination}
-              className={cn(inputClass, "font-serif text-3xl")}
-            />
-          </Field>
+          {form.stops.length === 0 ? (
+            <Field id="destination" label="Destination" error={shown.destination} className="sm:col-span-2">
+              <input
+                id="destination"
+                placeholder="Kyoto, Japan"
+                value={form.destination}
+                onChange={(e) => update("destination", e.target.value)}
+                maxLength={100}
+                autoComplete="off"
+                aria-invalid={!!shown.destination}
+                className={cn(inputClass, "font-serif text-3xl")}
+              />
+            </Field>
+          ) : (
+            <fieldset className="sm:col-span-2">
+              <legend className="eyebrow text-ink-muted">Route</legend>
+              <ol className="mt-2 space-y-4">
+                {form.stops.map((stop, index) => (
+                  <li key={index} className="flex items-end gap-3">
+                    <span className="mb-2 w-6 shrink-0 font-serif text-lg text-terracotta" aria-hidden>
+                      {index + 1}
+                    </span>
+                    <div className="min-w-0 flex-1">
+                      <label htmlFor={`stop-${index}`} className="sr-only">
+                        City {index + 1}
+                      </label>
+                      <input
+                        id={`stop-${index}`}
+                        placeholder={index === 0 ? "Tokyo, Japan" : "Kyoto, Japan"}
+                        value={stop.destination}
+                        onChange={(e) => updateStop(index, { destination: e.target.value })}
+                        maxLength={60}
+                        autoComplete="off"
+                        aria-invalid={!!shown.stops && stop.destination.trim().length < 2}
+                        className={cn(inputClass, "font-serif text-2xl")}
+                      />
+                    </div>
+                    <div className="w-20 shrink-0">
+                      <label htmlFor={`stop-nights-${index}`} className="text-xs text-ink-muted">
+                        Nights
+                      </label>
+                      <input
+                        id={`stop-nights-${index}`}
+                        type="number"
+                        inputMode="numeric"
+                        min={1}
+                        max={30}
+                        value={stop.nights}
+                        onChange={(e) => updateStop(index, { nights: e.target.value })}
+                        className={cn(inputClass, "tabular-nums")}
+                      />
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => removeStop(index)}
+                      aria-label={`Remove ${stop.destination || `city ${index + 1}`}`}
+                      className="mb-2 rounded-full p-1.5 text-ink-muted hover:bg-rule/60 hover:text-terracotta"
+                    >
+                      <X className="h-4 w-4" aria-hidden />
+                    </button>
+                  </li>
+                ))}
+              </ol>
+              {shown.stops ? (
+                <p className="mt-3 text-sm text-terracotta" role="alert">{shown.stops}</p>
+              ) : (
+                <p className="mt-3 text-sm text-ink-muted" aria-live="polite">
+                  {nights === null
+                    ? "Pick your dates, then split the nights between the cities."
+                    : `${assignedNights} of ${nights} night${nights === 1 ? "" : "s"} assigned. You travel on to the next city on the morning after your last night.`}
+                </p>
+              )}
+            </fieldset>
+          )}
+          {form.stops.length < MAX_STOPS && (
+            <div className="sm:col-span-2 -mt-4">
+              <button
+                type="button"
+                onClick={addStop}
+                className="inline-flex items-center gap-1.5 text-sm text-ink-soft hover:text-terracotta transition-colors"
+              >
+                <Plus className="h-4 w-4" aria-hidden />
+                {form.stops.length === 0 ? "Add another city (multi-city trip)" : "Add a city"}
+              </button>
+            </div>
+          )}
           <Field id="start_date" label="From" error={shown.start_date}>
             <input
               id="start_date"

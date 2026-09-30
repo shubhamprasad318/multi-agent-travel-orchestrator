@@ -2,8 +2,8 @@ from datetime import date, timedelta
 
 from pydantic import BaseModel, Field
 
-from agents.base import SYSTEM_BASE, AgentContext, user_input
-from schemas import TravelRequest, WeatherDay, WeatherResult
+from agents.base import SYSTEM_BASE, AgentContext, route_text
+from schemas import PackingCategory, PackingItem, TravelRequest, WeatherDay, WeatherResult
 
 # Published forecasts are only meaningful about this far ahead.
 FORECAST_HORIZON_DAYS = 10
@@ -18,11 +18,20 @@ class DayDraft(BaseModel):
     is_forecast: bool = Field(description="true only if taken from a published forecast found via search")
 
 
+class PackingItemDraft(BaseModel):
+    item: str
+    category: PackingCategory
+    reason: str = Field(description="Why it's needed on this trip (a date's weather, an activity, a dress code); empty if obvious")
+
+
 class WeatherDraft(BaseModel):
     summary: str
     days: list[DayDraft]
-    packing_list: list[str]
+    packing_items: list[PackingItemDraft]
     advisories: list[str]
+
+
+MAX_PACKING_ITEMS = 20
 
 
 SYSTEM = SYSTEM_BASE + (
@@ -30,7 +39,8 @@ SYSTEM = SYSTEM_BASE + (
     "Search to find the current published forecast for each date and mark those days "
     "is_forecast=true. For every other date give TYPICAL conditions for that place and time "
     "of year (climate averages) with is_forecast=false — never present averages as a forecast. "
-    "Write a 1-2 sentence summary, 8-12 practical packing items, and advisories only for real "
+    "Write a 1-2 sentence summary, 10-15 practical packing items (each with a category and a "
+    "short reason tied to this trip's dates, weather or plans), and advisories only for real "
     "seasonal risks (monsoon, typhoon season, extreme heat, snow closures)."
 )
 
@@ -38,11 +48,14 @@ SYSTEM = SYSTEM_BASE + (
 async def run(ctx: AgentContext, request: TravelRequest, today: date | None = None) -> WeatherResult:
     today = today or date.today()
     trip_dates = [request.start_date + timedelta(days=i) for i in range(request.days)]
+    # Multi-city: each date's weather is for the city the traveller is in that day.
+    city_of = dict(zip(trip_dates, request.day_cities())) if request.stops else {}
+    dates_text = ", ".join(f"{d.isoformat()} ({city_of[d]})" if city_of else d.isoformat() for d in trip_dates)
     within_horizon = request.start_date <= today + timedelta(days=FORECAST_HORIZON_DAYS)
     user = (
-        f"Destination: {user_input(request.destination)}\n"
+        f"{route_text(request)}\n"
         f"Today: {today.isoformat()}\n"
-        f"Give one entry for each of these dates: {', '.join(d.isoformat() for d in trip_dates)}\n"
+        f"Give one entry for each of these dates{' (for the city in brackets)' if city_of else ''}: {dates_text}\n"
         + (
             "Some dates are within the forecast horizon: search for the latest forecast."
             if within_horizon
@@ -66,6 +79,7 @@ async def run(ctx: AgentContext, request: TravelRequest, today: date | None = No
                     temp_min_c=d.temp_min_c,
                     temp_max_c=d.temp_max_c,
                     precip_chance=max(0, min(100, d.precip_chance)),
+                    location=city_of.get(day_date),
                 ),
                 # Forecast claims are only trusted when the model could actually search.
                 d.is_forecast and within_horizon,
@@ -79,10 +93,21 @@ async def run(ctx: AgentContext, request: TravelRequest, today: date | None = No
     else:
         source = "climate_estimate"
 
+    items = _packing_items(draft.packing_items)
     return WeatherResult(
         source=source,
         summary=draft.summary,
         days=[day for _, (day, _) in sorted(days.items())],
-        packing_list=draft.packing_list,
+        packing_list=[i.item for i in items],
+        packing_items=items,
         advisories=draft.advisories,
     )
+
+
+def _packing_items(drafts: list[PackingItemDraft]) -> list[PackingItem]:
+    items: dict[str, PackingItem] = {}
+    for d in drafts:
+        name = " ".join(d.item.split())[:80]
+        if name and name.lower() not in items:
+            items[name.lower()] = PackingItem(item=name, category=d.category, reason=d.reason.strip()[:160] or None)
+    return list(items.values())[:MAX_PACKING_ITEMS]

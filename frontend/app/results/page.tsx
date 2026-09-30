@@ -4,12 +4,15 @@ import { Suspense, useEffect, useState } from "react";
 import Image from "next/image";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
-import { ArrowLeft, CalendarPlus, Check, Loader2, Printer, Share2 } from "lucide-react";
+import { ArrowLeft, CalendarPlus, Check, CloudDownload, Loader2, Printer, Share2, WifiOff } from "lucide-react";
+import { InviteBanner, PlanTogetherButton } from "@/components/results/collab/PlanTogether";
 import TravelPlanDisplay from "@/components/results/TravelPlanDisplay";
-import { getTravelPlan } from "@/lib/api";
+import { ApiError, getTravelPlan } from "@/lib/api";
+import { CollabProvider, useCollab } from "@/lib/collab";
 import { downloadIcs } from "@/lib/calendar";
 import { fetchDestinationImage, type DestinationImage } from "@/lib/destinationImage";
-import { formatDate } from "@/lib/format";
+import { formatDate, primaryPlace, shortRoute } from "@/lib/format";
+import { getOfflinePlan, offlineEntryForTrip, saveOffline, subscribeOffline } from "@/lib/offline";
 import { cachePlan, getCachedPlan } from "@/lib/planCache";
 import { cn } from "@/lib/utils";
 import type { TravelPlan } from "@/lib/types";
@@ -26,9 +29,12 @@ function Results() {
   const id = useSearchParams().get("id");
   const [plan, setPlan] = useState<TravelPlan | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // Showing the copy saved on this device because the server couldn't be reached.
+  const [fromOffline, setFromOffline] = useState(false);
 
   useEffect(() => {
     setError(null);
+    setFromOffline(false);
     if (!id) {
       setError("No plan selected.");
       return;
@@ -46,6 +52,13 @@ function Results() {
       })
       .catch((err) => {
         if (controller.signal.aborted) return;
+        const saved = getOfflinePlan(id);
+        // A 404 means the plan is really gone; anything else may just be no signal.
+        if (saved && !(err instanceof ApiError && err.status === 404)) {
+          setPlan(saved);
+          setFromOffline(true);
+          return;
+        }
         setError(err instanceof Error ? err.message : "Could not load this plan.");
       });
     return () => controller.abort();
@@ -67,22 +80,32 @@ function Results() {
   if (!plan) return <LoadingState />;
 
   return (
-    <>
+    <CollabProvider plan={plan}>
       <PlanHero plan={plan} />
+      {fromOffline && (
+        <div className="container print:hidden">
+          <p role="status" className="mt-6 flex items-center gap-2 border-l-4 border-ochre bg-ochre-light/50 px-4 py-3 text-sm text-ink">
+            <WifiOff className="h-4 w-4 shrink-0" aria-hidden /> You&apos;re offline: this is the copy saved on this device. Changes need a
+            connection.
+          </p>
+        </div>
+      )}
+      <InviteBanner plan={plan} />
       <TravelPlanDisplay plan={plan} />
-    </>
+    </CollabProvider>
   );
 }
 
 function PlanHero({ plan }: { plan: TravelPlan }) {
   const { trip } = plan;
+  const { canEdit } = useCollab();
   const [image, setImage] = useState<DestinationImage | null>(null);
   const [shareState, setShareState] = useState<"idle" | "copied" | "failed">("idle");
 
   useEffect(() => {
     const controller = new AbortController();
     setImage(null);
-    fetchDestinationImage(trip.destination, controller.signal).then(setImage);
+    fetchDestinationImage(primaryPlace(trip.destination), controller.signal).then(setImage);
     return () => controller.abort();
   }, [trip.destination]);
 
@@ -128,7 +151,14 @@ function PlanHero({ plan }: { plan: TravelPlan }) {
           <p className="eyebrow text-ochre print:text-terracotta">
             Your itinerary{plan.version > 1 ? ` · version ${plan.version}` : ""}
           </p>
-          <h1 className="mt-3 text-5xl sm:text-6xl lg:text-8xl leading-[0.95] drop-shadow-sm">{trip.destination}</h1>
+          <h1
+            className={cn(
+              "mt-3 leading-[0.95] drop-shadow-sm",
+              trip.stops && trip.stops.length > 1 ? "text-4xl sm:text-5xl lg:text-7xl" : "text-5xl sm:text-6xl lg:text-8xl"
+            )}
+          >
+            {shortRoute(trip.destination)}
+          </h1>
           <p className="mt-4 text-lg text-paper/85 print:text-ink-soft">
             {dates}
             {trip.origin && <> · from {trip.origin}</>}
@@ -163,9 +193,13 @@ function PlanHero({ plan }: { plan: TravelPlan }) {
         <ActionButton onClick={() => window.print()} icon={<Printer className="h-4 w-4" aria-hidden />}>
           Print / PDF
         </ActionButton>
-        <a href="#refine" className="rounded-full bg-terracotta px-4 py-2 text-sm text-paper hover:bg-terracotta-dark transition-colors">
-          Request changes
-        </a>
+        <SaveOfflineButton plan={plan} />
+        <PlanTogetherButton plan={plan} className={actionClass} />
+        {canEdit && (
+          <a href="#refine" className="rounded-full bg-terracotta px-4 py-2 text-sm text-paper hover:bg-terracotta-dark transition-colors">
+            Request changes
+          </a>
+        )}
       </div>
     </header>
   );
@@ -189,6 +223,39 @@ function ActionLink({ href, icon, children }: { href: string; icon: React.ReactN
       {icon}
       {children}
     </Link>
+  );
+}
+
+function SaveOfflineButton({ plan }: { plan: TravelPlan }) {
+  const [saved, setSaved] = useState<"none" | "this" | "older">("none");
+  const [failed, setFailed] = useState(false);
+
+  useEffect(() => {
+    const refresh = () => {
+      const entry = offlineEntryForTrip(plan);
+      setSaved(!entry ? "none" : entry.id === plan.id ? "this" : "older");
+    };
+    refresh();
+    return subscribeOffline(refresh);
+  }, [plan]);
+
+  const save = () => {
+    const ok = saveOffline(plan);
+    setFailed(!ok);
+    if (!ok) setTimeout(() => setFailed(false), 3000);
+  };
+
+  if (saved === "this") {
+    return (
+      <span className={cn(actionClass, "cursor-default border-teal/40 text-teal hover:border-teal/40 hover:text-teal")} role="status">
+        <Check className="h-4 w-4" aria-hidden /> Saved offline
+      </span>
+    );
+  }
+  return (
+    <ActionButton onClick={save} icon={<CloudDownload className="h-4 w-4" aria-hidden />}>
+      {failed ? "Storage full" : saved === "older" ? "Update offline copy" : "Save offline"}
+    </ActionButton>
   );
 }
 

@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { AlertTriangle } from "lucide-react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { useCollab } from "@/lib/collab";
 import { MoneyProvider, moneyFor } from "@/lib/money";
 import { cn } from "@/lib/utils";
 import type { TravelPlan } from "@/lib/types";
@@ -14,6 +15,7 @@ import BookingsSection from "./BookingsSection";
 import BudgetSection from "./BudgetSection";
 import ItinerarySection from "./ItinerarySection";
 import MapSection from "./map/MapSection";
+import PrepareSection from "./PrepareSection";
 import RefinePanel from "./RefinePanel";
 import ResearchSection from "./ResearchSection";
 import ValidationSection, { BUDGET_TONE, STATUS_STYLE } from "./ValidationSection";
@@ -27,6 +29,7 @@ const TABS = [
   { value: "budget", label: "Budget", print: true },
   { value: "bookings", label: "Flights & hotels", print: true },
   { value: "weather", label: "Weather", print: true },
+  { value: "prepare", label: "Get ready", print: true },
   { value: "activities", label: "Things to do", print: true },
   { value: "guide", label: "Guide", print: true },
   { value: "validation", label: "Quality", print: true },
@@ -39,6 +42,7 @@ export default function TravelPlanDisplay({ plan }: { plan: TravelPlan }) {
   const { trip, budget, validation } = plan;
   const destination = trip.destination;
   const money = moneyFor(plan);
+  const { canEdit } = useCollab();
   const [tab, setTab] = useState<TabValue>("itinerary");
 
   // The open tab lives in the URL hash (#budget, #map…) so links can point at it.
@@ -69,11 +73,20 @@ export default function TravelPlanDisplay({ plan }: { plan: TravelPlan }) {
   ];
 
   const sections: Record<TabValue, React.ReactNode> = {
-    itinerary: <ItinerarySection itinerary={plan.itinerary} destination={destination} planId={plan.id} />,
+    itinerary: (
+      <ItinerarySection
+        itinerary={plan.itinerary}
+        destination={destination}
+        planId={plan.id}
+        weather={plan.weather}
+        transfers={plan.bookings?.transfers}
+      />
+    ),
     map: <MapSection itinerary={plan.itinerary} />,
     budget: <BudgetSection budget={budget} itinerary={plan.itinerary} bookings={plan.bookings} travelers={trip.travelers} />,
     bookings: <BookingsSection bookings={plan.bookings} />,
     weather: <WeatherSection weather={plan.weather} />,
+    prepare: <PrepareSection plan={plan} />,
     activities: <ActivitiesSection activities={plan.activities?.activities ?? null} destination={destination} />,
     guide: <ResearchSection research={plan.research} />,
     validation: <ValidationSection validation={validation} budget={budget} />,
@@ -132,8 +145,8 @@ export default function TravelPlanDisplay({ plan }: { plan: TravelPlan }) {
         </Tabs>
       </div>
 
-      <RefinePanel plan={plan} />
-      <TripChat plan={plan} />
+      {canEdit && <RefinePanel plan={plan} />}
+      <TripChat plan={plan} canApply={canEdit} />
     </MoneyProvider>
   );
 }

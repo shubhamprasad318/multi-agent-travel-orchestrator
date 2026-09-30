@@ -6,6 +6,7 @@ import { usePathname } from "next/navigation";
 import { Menu, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { BRAND } from "@/lib/brand";
+import AccountMenu from "./AccountMenu";
 
 const NAV_LINKS = [
   { href: "/#agents", label: "The agents" },
@@ -62,8 +63,12 @@ export default function Navbar() {
           >
             Plan a trip
           </Link>
+          <AccountMenu />
         </div>
 
+        <div className="md:hidden ml-auto">
+          <AccountMenu />
+        </div>
         <button
           type="button"
           className="md:hidden -mr-2 p-2 text-ink"

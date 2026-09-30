@@ -1,7 +1,11 @@
-"""Key/value persistence used for the tool cache and for saved plans.
+"""Key/value persistence used for the tool cache, saved plans, users and trip sharing.
 
 `MemoryStore` is the zero-config default (data is lost on restart).
 `MongoStore` is used when `MONGODB_URI` is set.
+
+`find` matches top-level fields of stored values by equality; when the stored
+field is a list, it matches if the list contains the value (as MongoDB does).
+A list as the wanted value means "any of these".
 """
 
 import time
@@ -21,7 +25,19 @@ class Store(Protocol):
 
     async def delete(self, collection: str, key: str) -> None: ...
 
+    async def find(self, collection: str, where: dict[str, Any], limit: int = 200) -> list[dict[str, Any]]: ...
+
     async def close(self) -> None: ...
+
+
+def _matches(value: dict[str, Any], where: dict[str, Any]) -> bool:
+    for field, wanted in where.items():
+        actual = value.get(field)
+        options = wanted if isinstance(wanted, list) else [wanted]
+        present = actual if isinstance(actual, list) else [actual]
+        if not any(item in options for item in present):
+            return False
+    return True
 
 
 class MemoryStore:
@@ -50,6 +66,16 @@ class MemoryStore:
     async def delete(self, collection: str, key: str) -> None:
         self._data.get(collection, OrderedDict()).pop(key, None)
 
+    async def find(self, collection: str, where: dict[str, Any], limit: int = 200) -> list[dict[str, Any]]:
+        now = time.time()
+        found = []
+        for expires_at, value in list(self._data.get(collection, OrderedDict()).values()):
+            if (expires_at is None or expires_at >= now) and _matches(value, where):
+                found.append(value)
+                if len(found) >= limit:
+                    break
+        return found
+
     async def close(self) -> None:
         self._data.clear()
 
@@ -61,6 +87,7 @@ class MongoStore:
         self._client = AsyncMongoClient(uri, serverSelectionTimeoutMS=3000, tz_aware=True)
         self._db = self._client[database]
         self._indexed: set[str] = set()
+        self._field_indexes: set[tuple[str, str]] = set()
 
     async def _collection(self, name: str):
         collection = self._db[name]
@@ -88,6 +115,19 @@ class MongoStore:
 
     async def delete(self, collection: str, key: str) -> None:
         await (await self._collection(collection)).delete_one({"_id": key})
+
+    async def find(self, collection: str, where: dict[str, Any], limit: int = 200) -> list[dict[str, Any]]:
+        coll = await self._collection(collection)
+        for field in where:
+            if (collection, field) not in self._field_indexes:
+                await coll.create_index(f"value.{field}")
+                self._field_indexes.add((collection, field))
+        query: dict[str, Any] = {
+            f"value.{field}": {"$in": wanted} if isinstance(wanted, list) else wanted for field, wanted in where.items()
+        }
+        now = datetime.now(timezone.utc)
+        query["$or"] = [{"expires_at": {"$exists": False}}, {"expires_at": {"$gte": now}}]
+        return [doc["value"] async for doc in coll.find(query).limit(limit)]
 
     async def close(self) -> None:
         await self._client.close()

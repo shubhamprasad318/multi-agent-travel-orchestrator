@@ -4,7 +4,7 @@ import pytest
 from pydantic import ValidationError
 
 from agents import weather_agent
-from agents.weather_agent import DayDraft as WeatherDayDraft, WeatherDraft
+from agents.weather_agent import DayDraft as WeatherDayDraft, PackingItemDraft, WeatherDraft
 from tests.conftest import START, make_request
 from utils.store import MemoryStore
 
@@ -60,7 +60,7 @@ def _weather_draft(request, forecast_days: int):
             for i in range(request.days)
         ]
         + [WeatherDayDraft(date="not-a-date", condition="x", temp_min_c=0, temp_max_c=0, precip_chance=0, is_forecast=False)],
-        packing_list=["Umbrella"],
+        packing_items=[PackingItemDraft(item="Umbrella", category="gear", reason="Showers are common")],
         advisories=[],
     )
 

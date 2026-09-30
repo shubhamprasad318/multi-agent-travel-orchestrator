@@ -19,6 +19,16 @@ def _valid(lat: float, lng: float) -> bool:
     return -90 <= lat <= 90 and -180 <= lng <= 180 and not (abs(lat) < 1e-6 and abs(lng) < 1e-6)
 
 
+def plausible_points_by_group(points: list[tuple[float, float]], groups: list[str | None]) -> list[bool]:
+    """`plausible_points` checked separately within each group (e.g. each city of a multi-city trip)."""
+    result = [False] * len(points)
+    for group in dict.fromkeys(groups):
+        indexes = [i for i, g in enumerate(groups) if g == group]
+        for i, ok in zip(indexes, plausible_points([points[i] for i in indexes])):
+            result[i] = ok
+    return result
+
+
 def plausible_points(points: list[tuple[float, float]]) -> list[bool]:
     """For each (lat, lng), whether it is valid and near the itinerary's centre.
 

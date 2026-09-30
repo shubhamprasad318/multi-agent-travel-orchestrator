@@ -32,6 +32,7 @@ export default function WeatherSection({ weather }: { weather: WeatherResult | n
             <li key={day.date} className="w-32 px-4 py-5">
               <p className="text-xs uppercase tracking-eyebrow text-ink-muted">{formatDate(day.date, { weekday: "short" })}</p>
               <p className="text-sm text-ink-soft">{formatDate(day.date)}</p>
+              {day.location && <p className="mt-1 truncate text-xs text-teal-dark">{day.location.split(",")[0]}</p>}
               <p className="mt-3 font-serif text-3xl text-ink tabular-nums">{Math.round(day.temp_max_c)}°</p>
               <p className="text-sm text-ink-muted tabular-nums">low {Math.round(day.temp_min_c)}°</p>
               <p className="mt-3 text-sm leading-snug text-ink-soft min-h-[2.5rem]">{day.condition}</p>
@@ -43,14 +44,20 @@ export default function WeatherSection({ weather }: { weather: WeatherResult | n
 
       {weather.packing_list.length > 0 && (
         <div className="mt-12">
-          <h3 className="text-2xl text-ink">Packing list</h3>
+          <div className="flex flex-wrap items-baseline justify-between gap-3">
+            <h3 className="text-2xl text-ink">What to pack</h3>
+            <a href="#prepare" className="link-underline text-sm text-ink-soft hover:text-terracotta print:hidden">
+              Tick them off in Get ready →
+            </a>
+          </div>
           <ul className="mt-4 grid gap-x-10 gap-y-2 sm:grid-cols-2 lg:grid-cols-3">
-            {weather.packing_list.map((item) => (
-              <li key={item}>
-                <label className="flex cursor-pointer items-center gap-3 border-b border-rule py-2 text-ink-soft has-[:checked]:text-ink-muted has-[:checked]:line-through">
-                  <input type="checkbox" className="h-4 w-4 accent-terracotta" />
-                  {item}
-                </label>
+            {(weather.packing_items && weather.packing_items.length > 0
+              ? weather.packing_items
+              : weather.packing_list.map((item) => ({ item, reason: null }))
+            ).map(({ item, reason }) => (
+              <li key={item} className="border-b border-rule py-2">
+                <span className="text-ink-soft">{item}</span>
+                {reason && <span className="block text-xs text-ink-muted">{reason}</span>}
               </li>
             ))}
           </ul>

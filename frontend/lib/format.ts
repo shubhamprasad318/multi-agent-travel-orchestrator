@@ -29,3 +29,17 @@ export function safeUrl(url: string | null | undefined): string | null {
     return null;
   }
 }
+
+/** Multi-city destinations are routes ("Tokyo, Japan → Kyoto, Japan"). */
+export const ROUTE_JOINER = " → ";
+
+/** The first place of a destination or route: used for cover photos and short labels. */
+export function primaryPlace(destination: string): string {
+  return destination.split(ROUTE_JOINER)[0].trim();
+}
+
+/** A route with each city's name only ("Tokyo → Kyoto"); a single destination is returned as is. */
+export function shortRoute(destination: string): string {
+  const places = destination.split(ROUTE_JOINER);
+  return places.length > 1 ? places.map((p) => p.split(",")[0].trim()).join(ROUTE_JOINER) : destination;
+}

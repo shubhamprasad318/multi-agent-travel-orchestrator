@@ -163,5 +163,17 @@
     "budget": 2000,
     "travelers": 2,
     "preferences": {"interests": ["food", "art", "history"], "pace": "moderate", "accommodation": "mid-range"}
+  },
+  {
+    "id": "japan-multicity",
+    "why": "Multi-city route: each day in the right city, a hotel per city and a transfer between them",
+    "destination": "Tokyo → Kyoto",
+    "stops": [{"destination": "Tokyo, Japan", "nights": 3}, {"destination": "Kyoto, Japan", "nights": 2}],
+    "origin": "Singapore",
+    "start_offset_days": 50,
+    "days": 6,
+    "budget": 7000,
+    "travelers": 2,
+    "preferences": {"interests": ["food", "culture", "history"], "pace": "moderate", "accommodation": "mid-range"}
   }
 ]

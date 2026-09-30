@@ -1,6 +1,8 @@
+import type { Reminder } from "@/lib/prep";
 import type { TravelPlan } from "@/lib/types";
 
-// Builds an iCalendar (.ics) file with one event per itinerary slot.
+// Builds iCalendar (.ics) files: one event per itinerary slot, or one all-day
+// event per pre-trip reminder.
 
 function escapeText(value: string): string {
   return value.replace(/\\/g, "\\\\").replace(/;/g, "\\;").replace(/,/g, "\\,").replace(/\r?\n/g, "\\n");
@@ -64,14 +66,54 @@ export function buildIcs(plan: TravelPlan): string {
   return lines.join("\r\n") + "\r\n";
 }
 
-export function downloadIcs(plan: TravelPlan): void {
-  const blob = new Blob([buildIcs(plan)], { type: "text/calendar;charset=utf-8" });
+function nextDay(date: string): string {
+  const [y, m, d] = date.split("-").map(Number);
+  const next = new Date(Date.UTC(y, m - 1, d + 1));
+  return `${next.getUTCFullYear()}${pad(next.getUTCMonth() + 1)}${pad(next.getUTCDate())}`;
+}
+
+export function buildRemindersIcs(plan: TravelPlan, reminders: Reminder[]): string {
+  const stamp = new Date().toISOString().replace(/[-:]/g, "").replace(/\.\d{3}/, "");
+  const lines = ["BEGIN:VCALENDAR", "VERSION:2.0", "PRODID:-//TravelOrchestrator//Prep//EN", "CALSCALE:GREGORIAN"];
+  for (const r of reminders) {
+    lines.push(
+      "BEGIN:VEVENT",
+      `UID:${plan.root_id ?? plan.id}-${r.id.replace(/[^a-z0-9-]/gi, "-")}@travelorchestrator`,
+      `DTSTAMP:${stamp}`,
+      `DTSTART;VALUE=DATE:${r.due.replace(/-/g, "")}`,
+      `DTEND;VALUE=DATE:${nextDay(r.due)}`,
+      fold(`SUMMARY:${escapeText(`${r.title} (${plan.trip.destination})`)}`),
+      ...(r.detail || r.href ? [fold(`DESCRIPTION:${escapeText([r.detail, r.href].filter(Boolean).join("\n"))}`)] : []),
+      "BEGIN:VALARM",
+      "ACTION:DISPLAY",
+      "TRIGGER:PT9H",
+      fold(`DESCRIPTION:${escapeText(r.title)}`),
+      "END:VALARM",
+      "END:VEVENT"
+    );
+  }
+  lines.push("END:VCALENDAR");
+  return lines.join("\r\n") + "\r\n";
+}
+
+function download(content: string, filename: string): void {
+  const blob = new Blob([content], { type: "text/calendar;charset=utf-8" });
   const url = URL.createObjectURL(blob);
   const link = document.createElement("a");
   link.href = url;
-  link.download = `${plan.trip.destination.replace(/[^a-z0-9]+/gi, "-").toLowerCase()}-itinerary.ics`;
+  link.download = filename;
   link.click();
   URL.revokeObjectURL(url);
+}
+
+const slug = (plan: TravelPlan) => plan.trip.destination.replace(/[^a-z0-9]+/gi, "-").replace(/^-|-$/g, "").toLowerCase();
+
+export function downloadIcs(plan: TravelPlan): void {
+  download(buildIcs(plan), `${slug(plan)}-itinerary.ics`);
+}
+
+export function downloadRemindersIcs(plan: TravelPlan, reminders: Reminder[]): void {
+  download(buildRemindersIcs(plan, reminders), `${slug(plan)}-prep.ics`);
 }
 
 export function mapsUrl(place: string, destination: string): string {

@@ -17,7 +17,8 @@ from typing import Any, Awaitable, Callable, Protocol, TypeVar
 from pydantic import BaseModel
 
 from config import AGENT_CONFIG, Settings
-from schemas import Source
+from schemas import Source, TravelRequest
+from utils.fares import FareLookup, travelpayouts_lookup
 from utils.logger import get_logger
 from utils.store import Store
 
@@ -57,6 +58,15 @@ class AgentContext:
     # Returns (USD-based exchange rates, rates date). Defaults to utils.fx.fetch_rates;
     # replaceable in tests.
     fx: Callable[[], Awaitable[tuple[dict[str, float], str | None]]] | None = None
+    # Recent real fares (utils.fares). None: built from settings when a
+    # Travelpayouts token is configured, otherwise flights are estimates only.
+    fares: FareLookup | None = None
+
+    def fare_lookup(self) -> FareLookup | None:
+        if self.fares is not None:
+            return self.fares
+        token = self.settings.travelpayouts_token
+        return travelpayouts_lookup(token, self.store, self.settings.travelpayouts_marker) if token else None
 
 
 @dataclass
@@ -244,3 +254,27 @@ GROUNDED_HINT = " Use Google Search to check that places are real, currently ope
 
 def user_input(value: str) -> str:
     return f"<user_input>{value}</user_input>"
+
+
+def match_city(value: str | None, cities: list[str]) -> str | None:
+    """The trip city a model-written city name refers to, or None."""
+    if not value or not cities:
+        return None
+    wanted = " ".join(value.lower().split())
+    for city in cities:
+        name = city.lower()
+        # "Kyoto" should match "Kyoto, Japan" and vice versa.
+        if wanted == name or wanted == name.split(",")[0].strip() or name.startswith(wanted) or wanted.startswith(name):
+            return city
+    return None
+
+
+def route_text(request: TravelRequest) -> str:
+    """The destination line of a prompt: one place, or a multi-city route with dates."""
+    if not request.stops:
+        return f"Destination: {user_input(request.destination)}"
+    legs = "; ".join(
+        f"{user_input(stop.destination)} ({stop.nights} night{'' if stop.nights == 1 else 's'}, {check_in} to {check_out})"
+        for stop, check_in, check_out in request.stop_dates()
+    )
+    return f"Multi-city trip, cities in travel order: {legs}"
