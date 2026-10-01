@@ -1,9 +1,21 @@
 import Link from "next/link";
+import FlowDemo from "@/components/trace/FlowDemo";
 import { BRAND } from "@/lib/brand";
 
 export default function Footer() {
   return (
     <footer className="border-t border-rule bg-paper-deep print:hidden">
+      <div className="container grid items-center gap-8 border-b border-rule py-12 lg:grid-cols-[1fr_2.4fr]">
+        <div>
+          <p className="eyebrow">Behind every plan</p>
+          <p className="mt-3 font-serif text-2xl leading-snug text-ink">Six agents, working in parallel.</p>
+          <p className="mt-3 text-sm leading-relaxed text-ink-soft">
+            A replay of a typical run: research and weather start together, activities and bookings follow, then the
+            planner writes the days and the editor checks them.
+          </p>
+        </div>
+        <FlowDemo className="min-w-0" />
+      </div>
       <div className="container py-14 grid gap-10 md:grid-cols-[2fr_1fr_1fr]">
         <div className="max-w-sm">
           <p className="font-serif text-3xl text-ink">{BRAND.short}</p>
