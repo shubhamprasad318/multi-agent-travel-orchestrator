@@ -12,6 +12,7 @@ from schemas import (
     WeatherResult,
 )
 from utils.budget import budget_score
+from utils.logistics import logistics_issues, logistics_penalty
 
 
 class ValidatorDraft(BaseModel):
@@ -106,8 +107,10 @@ async def run(
     def clamp(value: int) -> int:
         return max(0, min(100, int(value)))
 
+    # Travel times and meals are checked in code; each problem costs itinerary-quality points.
+    logistics = logistics_issues(request, itinerary)
     scores = {
-        "itinerary_quality": clamp(draft.itinerary_quality),
+        "itinerary_quality": clamp(draft.itinerary_quality - logistics_penalty(logistics)),
         "budget_feasibility": budget_score(budget),
         "weather_suitability": clamp(draft.weather_suitability) if weather else 50,
         "activity_diversity": clamp(draft.activity_diversity),
@@ -119,6 +122,6 @@ async def run(
         overall_score=overall,
         status=status_for(overall),
         category_scores=scores,
-        issues=_structural_issues(request, itinerary, budget) + draft.issues[:5],
+        issues=_structural_issues(request, itinerary, budget) + logistics[:5] + draft.issues[:5],
         recommendations=draft.recommendations[:5],
     )

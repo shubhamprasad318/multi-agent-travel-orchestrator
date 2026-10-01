@@ -9,6 +9,8 @@ model, the call is retried without it so planning still succeeds.
 """
 
 import asyncio
+import hashlib
+import json
 import time
 from contextvars import ContextVar
 from dataclasses import dataclass, field
@@ -20,6 +22,7 @@ from config import AGENT_CONFIG, Settings
 from schemas import Source, TravelRequest
 from utils.fares import FareLookup, travelpayouts_lookup
 from utils.logger import get_logger
+from utils.models import ModelPool, parse_quota_error
 from utils.store import Store
 
 logger = get_logger(__name__)
@@ -114,21 +117,29 @@ class LLMUnavailableError(RuntimeError):
     """Gemini refused every attempt (quota or overload). The message is safe to show users."""
 
 
-RETRYABLE_STATUS = (429, 500, 503)
-# After grounding hits its quota, skip it for this long instead of failing every call.
+# Overload and timeouts: worth one short retry on the same model.
+TRANSIENT_STATUS = (500, 502, 503, 504)
+# Grounding's own quota ran out: call without Google Search for this long.
 GROUNDING_COOLDOWN_SECONDS = 600
 
 
-def gemini_generator(settings: Settings, client: Any = None, sleep: Callable[[float], Awaitable[None]] = asyncio.sleep) -> StructuredGenerator:
+def gemini_generator(
+    settings: Settings,
+    client: Any = None,
+    sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
+    pool: ModelPool | None = None,
+) -> StructuredGenerator:
     """Production generator backed by the Gemini API (Google AI Studio key).
 
-    Resilience policy, in order:
-    1. A grounded call rejected for grounding reasons (400/403) or grounding
-       quota (429) is retried at once without Google Search, and grounding is
-       paused (permanently for 400/403, for a cooldown after 429).
-    2. Overload / rate limits (429, 5xx, timeouts) get one short backoff retry.
-    3. Then the fallback model is tried (without grounding).
-    `client` and `sleep` are injectable for tests.
+    Models are tried in `settings.gemini_models` order (see utils.models):
+    1. Out of quota (429): the model rests until its quota resets (per minute,
+       or midnight Pacific for the daily quota) and the next model is tried at
+       once. A 429 for Google Search's quota rests search on that model only.
+    2. Grounded requests try every model that can still search before going
+       without; a model that refuses search (400/403) is never grounded again.
+    3. Overload and timeouts (5xx) get one short retry, then the next model.
+    4. A model the key can't use (404) is dropped from the chain.
+    `client`, `sleep` and `pool` are injectable for tests.
     """
     from google import genai
     from google.genai import types
@@ -140,10 +151,8 @@ def gemini_generator(settings: Settings, client: Any = None, sleep: Callable[[fl
             api_key=settings.google_api_key,
             http_options=types.HttpOptions(retry_options=types.HttpRetryOptions(attempts=1)),
         )
-    grounding = {"enabled": settings.enable_grounding, "paused_until": 0.0}
-
-    def grounding_ok() -> bool:
-        return grounding["enabled"] and time.monotonic() >= grounding["paused_until"]
+    pool = pool or ModelPool(settings.gemini_models)
+    grounding_enabled = settings.enable_grounding
 
     async def call(agent_key: str, schema: type[T], system: str, user: str, model: str, grounded: bool) -> Any:
         if client is None:
@@ -156,7 +165,7 @@ def gemini_generator(settings: Settings, client: Any = None, sleep: Callable[[fl
             max_output_tokens=cfg["max_tokens"],
             response_mime_type="application/json",
             response_schema=schema,
-            # The fallback runs with its default thinking settings.
+            # Fallbacks run with their default thinking settings (not every model takes a level).
             thinking_config=types.ThinkingConfig(thinking_level=cfg.get("thinking", "low")) if primary else None,
             tools=[types.Tool(google_search=types.GoogleSearch())] if grounded else None,
             # Built-in tools only; no client-side function calling to run.
@@ -168,41 +177,51 @@ def gemini_generator(settings: Settings, client: Any = None, sleep: Callable[[fl
         )
 
     async def attempt_all(agent_key: str, schema: type[T], system: str, user: str, grounded: bool) -> tuple[Any, bool]:
-        """Returns (response, whether it was grounded)."""
-        models = [settings.gemini_model]
-        if settings.gemini_fallback_model and settings.gemini_fallback_model != settings.gemini_model:
-            models.append(settings.gemini_fallback_model)
-        last_status: int | None = None
-        for model_index, model in enumerate(models):
-            # Only the primary model supports grounding on the free tier.
-            use_grounding = grounded and model_index == 0 and grounding_ok()
-            retries_left = 1
-            while True:
-                try:
-                    return await call(agent_key, schema, system, user, model, use_grounding), use_grounding
-                except Exception as exc:  # noqa: BLE001 - classified below
-                    status = getattr(exc, "code", None)
-                    if isinstance(exc, TimeoutError):
-                        status = 503
-                    if use_grounding and status in (400, 403, 429):
-                        if status == 429:
-                            grounding["paused_until"] = time.monotonic() + GROUNDING_COOLDOWN_SECONDS
-                            logger.warning("Google Search grounding quota exhausted; pausing grounding for %d min", GROUNDING_COOLDOWN_SECONDS // 60)
+        """Returns (response, whether it was grounded).
+
+        A grounded request first goes to every model that can still use Google Search (real,
+        checked places beat a stronger model guessing); only then is it sent without search.
+        """
+        saw_quota = False
+        for with_search in ([True, False] if grounded and grounding_enabled else [False]):
+            for model in pool.available():
+                if with_search and not pool.can_ground(model):
+                    continue
+                retries_left = 1
+                while True:
+                    try:
+                        return await call(agent_key, schema, system, user, model, with_search), with_search
+                    except Exception as exc:  # noqa: BLE001 - classified below
+                        error = exc  # `exc` is unbound once the except block ends
+                    status = 503 if isinstance(error, TimeoutError) else getattr(error, "code", None)
+                    if status == 429:
+                        quota = parse_quota_error(error)
+                        if with_search and (quota.grounding or not (quota.daily or quota.retry_after)):
+                            # This model's Google Search quota (a bare 429 on a grounded call): it can still answer without.
+                            pool.rest_grounding(model, GROUNDING_COOLDOWN_SECONDS)
+                            logger.warning("%s: Google Search quota used up on %s; trying search on the next model", agent_key, model)
                         else:
-                            grounding["enabled"] = False
-                            logger.warning("Google Search grounding not available for this key/model; disabled")
-                        use_grounding = False
-                        continue
-                    if status not in RETRYABLE_STATUS:
-                        raise
-                    last_status = status
+                            saw_quota = True
+                            pool.rest_after_quota(model, quota)
+                            logger.warning("%s: %s out of quota (%s); trying the next model", agent_key, model, "daily" if quota.daily else "per minute")
+                        break
+                    if with_search and status in (400, 403):
+                        pool.disable_grounding(model)
+                        logger.warning("Google Search grounding not available on %s; it's called without", model)
+                        break
+                    if status == 404:
+                        pool.drop(model, "not available for this API key")
+                        logger.warning("%s isn't available for this API key; removed from the model chain", model)
+                        break
+                    if status not in TRANSIENT_STATUS:
+                        raise error
                     if retries_left > 0:
                         retries_left -= 1
                         await sleep(3)
                         continue
-                    logger.warning("%s: %s returned %s; %s", agent_key, model, status, "trying fallback" if model_index + 1 < len(models) else "giving up")
+                    logger.warning("%s: %s returned %s; trying the next model", agent_key, model, status)
                     break
-        if last_status == 429:
+        if saw_quota or not pool.available():
             raise LLMUnavailableError(
                 "Your Gemini API quota is used up for now. Wait a minute (or until tomorrow for the daily limit) and try again."
             )
@@ -240,6 +259,57 @@ def gemini_generator(settings: Settings, client: Any = None, sleep: Callable[[fl
         return parsed
 
     return generate
+
+
+CACHE_COLLECTION = "llm_cache"
+
+
+def cached_generator(generate: StructuredGenerator, store: Store) -> StructuredGenerator:
+    """Reuses answers to identical requests for agents with `cache_hours` (see AGENT_CONFIG).
+
+    Keyed on the exact prompt, so only the same trip hits the cache: planning it again after a
+    failure, or the evals. A hit makes no Gemini call, which keeps the free-tier quota for new trips.
+    """
+
+    async def generate_cached(
+        agent_key: str,
+        schema: type[T],
+        system: str,
+        user: str,
+        *,
+        grounded: bool = False,
+        sources: list[Source] | None = None,
+    ) -> T:
+        hours = AGENT_CONFIG[agent_key].get("cache_hours")
+        if not hours:
+            return await generate(agent_key, schema, system, user, grounded=grounded, sources=sources)
+        key = hashlib.sha256(json.dumps([agent_key, schema.__name__, system, user, grounded]).encode()).hexdigest()
+        try:
+            hit = await store.get(CACHE_COLLECTION, key)
+        except Exception:  # noqa: BLE001 - a cache failure must never fail planning
+            hit = None
+        if hit:
+            try:
+                value = schema.model_validate(hit["value"])
+            except ValueError:
+                value = None  # the schema changed since it was cached
+            if value is not None:
+                if sources is not None:
+                    sources.extend(Source.model_validate(s) for s in hit.get("sources", []))
+                logger.info("%s: answered from cache", agent_key)
+                return value
+        found: list[Source] = []
+        value = await generate(agent_key, schema, system, user, grounded=grounded, sources=found)
+        if sources is not None:
+            sources.extend(found)
+        try:
+            entry = {"value": value.model_dump(mode="json"), "sources": [s.model_dump(mode="json") for s in found]}
+            await store.set(CACHE_COLLECTION, key, entry, ttl=int(hours * 3600))
+        except Exception:  # noqa: BLE001
+            logger.warning("%s: could not cache the answer", agent_key, exc_info=True)
+        return value
+
+    return generate_cached
 
 
 SYSTEM_BASE = (

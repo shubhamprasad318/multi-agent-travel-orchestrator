@@ -22,6 +22,8 @@ Runs on a single free **Google AI Studio** key.
 - **Measured quality**: an evaluation harness runs 16 fixed trips through the real pipeline with deterministic checks, an LLM judge and a revision-loop ablation; the **/evals** dashboard tracks every run over time.
 - **Budget math in code, not in the model**: models estimate prices; the backend adds them up, so totals, remaining budget and "over budget" status are always consistent.
 - **Self-correcting**: a validator scores every plan (6 weighted categories). A low-scoring plan is revised once, and a revision is kept only if it scores higher.
+- **Travel times checked in code**: the validator measures the distance between consecutive stops and flags hops there isn't time for ("~10 km, about 34 min by road, but only 45 min apart"), plus full days missing a meal; each costs points and goes back to the planner on revision.
+- **Stretches the free tier**: Gemini models are tried in a chain, each with its own daily quota; a model that runs out is skipped until it resets (no wasted retries), and answers for the same trip are cached so planning it again costs no quota.
 - **Refine by chat**: "make day 2 more relaxed" re-plans the itinerary, re-validates it and saves a new version linked to the old one.
 - **Your currency, plus the local one**: plan in any of 160+ currencies (auto-detected from your browser). Every price shows your currency with the destination's alongside, e.g. ₹2,800 · ¥5,000, using live exchange rates frozen at planning time.
 - **Chat with your trip**: a concierge answers questions about *your* plan ("what should I pack for day 2?"), uses Google Search for current facts, and can turn a request into a one-click change.
@@ -108,7 +110,8 @@ npm run dev                     # http://localhost:3000
 | `RATE_LIMIT_PER_MINUTE` | `5` | Planning requests per client IP. |
 | `MAX_CONCURRENT_PLANS` | `2` | Keep low on the free tier (each plan makes ~7 Gemini calls). |
 | `DEBUG` | `false` | Includes agent error details in responses. |
-| `GEMINI_FALLBACK_MODEL` | `gemini-3.5-flash-lite` | Used when the main model is overloaded or out of quota. |
+| `GEMINI_FALLBACK_MODEL` | `gemini-3.5-flash-lite` | The last resort when every other model is overloaded or out of quota. |
+| `GEMINI_FALLBACK_MODELS` | `gemini-3.5-flash,gemini-2.5-flash` | Tried in order after the main model. On the free tier each model has its own daily quota, so a longer chain plans more trips a day. A model that's out of quota is skipped until it resets; one your key can't use is ignored. `/health` shows each model's state. |
 | `CHAT_RATE_LIMIT_PER_MINUTE` | `20` | Concierge questions per client IP. |
 | `GOOGLE_CLIENT_ID` | – | Optional. Turns on Google sign-in (accounts, trip sync, planning together). See below. |
 | `AUTH_SECRET` | random | Signs session tokens. Set a long random value in production, or everyone is signed out on restart. |

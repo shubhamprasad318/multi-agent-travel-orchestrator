@@ -23,7 +23,11 @@ class Settings(BaseSettings):
     # Gemini via Google AI Studio (https://aistudio.google.com/apikey). Required.
     google_api_key: str | None = None
     gemini_model: str = "gemini-3.8-flash"
-    # Used when the main model is overloaded or out of quota. Empty to disable.
+    # Tried in order when the main model is overloaded or out of quota. On the free tier every
+    # model has its own daily quota, so a longer chain plans more trips a day. Models the key
+    # can't use are skipped. JSON list or comma-separated.
+    gemini_fallback_models: Annotated[list[str], NoDecode] = Field(default_factory=lambda: ["gemini-3.5-flash", "gemini-2.5-flash"])
+    # The last resort (a lite model with its own, larger quota). Empty to disable.
     gemini_fallback_model: str = "gemini-3.5-flash-lite"
     # Google Search grounding (live, cited results). Falls back automatically if unavailable.
     enable_grounding: bool = True
@@ -63,9 +67,15 @@ class Settings(BaseSettings):
     # Optional Travelpayouts affiliate marker added to Aviasales links.
     travelpayouts_marker: str | None = None
 
-    @field_validator("cors_origins", mode="before")
+    @property
+    def gemini_models(self) -> list[str]:
+        """The full model chain, in the order models are tried."""
+        chain = [self.gemini_model, *self.gemini_fallback_models, self.gemini_fallback_model]
+        return list(dict.fromkeys(m.strip() for m in chain if m and m.strip()))
+
+    @field_validator("cors_origins", "gemini_fallback_models", mode="before")
     @classmethod
-    def _parse_origins(cls, value: Any) -> Any:
+    def _parse_list(cls, value: Any) -> Any:
         if isinstance(value, str):
             value = value.strip()
             if value.startswith("["):
@@ -73,7 +83,7 @@ class Settings(BaseSettings):
             else:
                 value = value.split(",")
         if isinstance(value, list):
-            # Browsers send Origin without a trailing slash.
+            # Browsers send Origin without a trailing slash (harmless for model names).
             return [str(v).strip().rstrip("/") for v in value if str(v).strip()]
         return value
 
@@ -93,10 +103,12 @@ def get_settings() -> Settings:
 
 AGENT_CONFIG = {
     # `thinking` is the Gemini 3 thinking level: more = better reasoning, slower.
-    "research_agent": {"temperature": 0.5, "max_tokens": 8000, "thinking": "low"},
-    "weather_agent": {"temperature": 0.2, "max_tokens": 8000, "thinking": "low"},
-    "activity_agent": {"temperature": 0.8, "max_tokens": 10000, "thinking": "low"},
-    "booking_agent": {"temperature": 0.3, "max_tokens": 8000, "thinking": "low"},
+    # `cache_hours`: identical requests (same trip) reuse the answer for this long, saving quota
+    # when a trip is planned again. Itinerary, validator and chat are never cached.
+    "research_agent": {"temperature": 0.5, "max_tokens": 8000, "thinking": "low", "cache_hours": 72},
+    "weather_agent": {"temperature": 0.2, "max_tokens": 8000, "thinking": "low", "cache_hours": 6},
+    "activity_agent": {"temperature": 0.8, "max_tokens": 10000, "thinking": "low", "cache_hours": 72},
+    "booking_agent": {"temperature": 0.3, "max_tokens": 8000, "thinking": "low", "cache_hours": 12},
     "itinerary_agent": {"temperature": 0.6, "max_tokens": 24000, "thinking": "medium"},
     "validator_agent": {"temperature": 0.1, "max_tokens": 8000, "thinking": "medium"},
     # Used only by the offline evaluation harness (evals/).

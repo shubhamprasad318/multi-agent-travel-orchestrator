@@ -29,7 +29,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 
 from agents import chat_agent
-from agents.base import LLMUnavailableError, gemini_generator
+from agents.base import LLMUnavailableError, cached_generator, gemini_generator
 from api import auth, collab, evals
 from api.common import (
     PLANS_COLLECTION,
@@ -51,6 +51,7 @@ from orchestrator import PlanningError, create_plan, edit_plan, refine_plan, rep
 from schemas import ChatReply, ChatRequest, ItineraryEdit, RefineRequest, ReplanDayRequest, TravelPlan, TravelRequest
 from utils.auth import SessionSigner, google_verifier
 from utils.logger import configure_logging, get_logger
+from utils.models import ModelPool
 from utils.store import MemoryStore, Store, create_store
 
 logger = get_logger(__name__)
@@ -66,7 +67,8 @@ async def lifespan(app: FastAPI):
         logger.error("GOOGLE_API_KEY is not set. Planning requests will fail.")
     app.state.settings = settings
     app.state.store = await create_store(settings.mongodb_uri, settings.database_name)
-    app.state.generate = gemini_generator(settings)
+    app.state.models = ModelPool(settings.gemini_models)
+    app.state.generate = cached_generator(gemini_generator(settings, pool=app.state.models), app.state.store)
     app.state.limiter = RateLimiter(settings.rate_limit_per_minute)
     app.state.chat_limiter = RateLimiter(settings.chat_rate_limit_per_minute)
     # Votes, comments and checklist saves are cheap but shouldn't be spammable.
@@ -128,6 +130,8 @@ async def health(request: Request) -> dict[str, Any]:
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "llm_configured": settings.has_llm,
         "model": settings.gemini_model,
+        # The model chain and which models are resting after running out of quota.
+        "models": request.app.state.models.status() if hasattr(request.app.state, "models") else [],
         "grounding_enabled": settings.enable_grounding,
         "storage": "memory" if isinstance(request.app.state.store, MemoryStore) else "mongodb",
         "accounts_enabled": settings.auth_enabled,

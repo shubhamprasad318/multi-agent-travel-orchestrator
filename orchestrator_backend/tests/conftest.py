@@ -48,7 +48,12 @@ def itinerary_draft(days: int, slot_cost: float = 50, meal_cost: float = 30) -> 
                     SlotDraft(period="morning", start_time="09:00", activity=f"Museum {n}", location="Ueno", cost=slot_cost, lat=35.7148, lng=139.7736),
                     SlotDraft(period="evening", start_time="19:00", activity=f"Food tour {n}", location="Shinjuku", cost=slot_cost, lat=35.6938, lng=139.7034),
                 ],
-                meals=[Meal(type="lunch", suggestion="Ramen", cuisine="Japanese", cost=meal_cost)],
+                # Three meals that add up to `meal_cost` a day.
+                meals=[
+                    Meal(type="breakfast", suggestion="Cafe", cuisine="Japanese", cost=meal_cost / 3),
+                    Meal(type="lunch", suggestion="Ramen", cuisine="Japanese", cost=meal_cost / 3),
+                    Meal(type="dinner", suggestion="Izakaya", cuisine="Japanese", cost=meal_cost / 3),
+                ],
                 backup_options=["teamLab"],
                 weather_note="",
             )

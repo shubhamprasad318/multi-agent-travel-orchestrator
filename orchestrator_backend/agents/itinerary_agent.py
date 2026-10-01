@@ -19,6 +19,7 @@ from schemas import (
 )
 from utils.budget import ground_budget, selected_hotels
 from utils.geo import plausible_points_by_group
+from utils.logistics import in_time_order
 from utils.slots import carry_over_slot_ids
 
 
@@ -237,7 +238,8 @@ async def run(
             date=request.start_date + timedelta(days=n - 1),
             city=day_cities[n - 1] if request.stops else None,
             theme=d.theme,
-            slots=[to_slot(s) for s in d.slots],
+            # Converted in the model's order (coordinates are checked in that order), then sorted by time.
+            slots=in_time_order([to_slot(s) for s in d.slots]),
             meals=meals_for[n],
             backup_options=d.backup_options,
             weather_note=d.weather_note.strip() or None,
