@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   ArrowRight,
   BookOpen,
@@ -94,7 +94,8 @@ function toFormState(initial?: TravelRequest | null, destination?: string): Form
     end_date: initial?.end_date ?? "",
     // No default amount: a sensible number depends on the currency.
     budget: initial?.budget ? String(initial.budget) : "",
-    currency: initial?.currency ?? detectCurrency(),
+    // Detected in the browser after mount (the server can't see the traveller's time zone).
+    currency: initial?.currency ?? "USD",
     travelers: String(initial?.travelers ?? 2),
     interests: (initial?.preferences.interests ?? []).map((i) => i.charAt(0).toUpperCase() + i.slice(1)),
     pace: initial?.preferences.pace ?? "moderate",
@@ -143,6 +144,10 @@ function validate(form: FormState, today: string): Partial<Record<keyof FormStat
 
 export default function PlanForm({ onSubmit, initialValues, initialDestination }: PlanFormProps) {
   const [form, setForm] = useState<FormState>(() => toFormState(initialValues, initialDestination));
+
+  useEffect(() => {
+    if (!initialValues?.currency) setForm((f) => ({ ...f, currency: detectCurrency() }));
+  }, [initialValues?.currency]);
   const [submitted, setSubmitted] = useState(false);
   const today = useMemo(() => toISODate(new Date()), []);
   const errors = validate(form, today);

@@ -150,15 +150,17 @@ const ZONE_CURRENCY: Record<string, string> = {
 /** Best guess at the user's currency from their browser; USD if unknown. */
 export function detectCurrency(): string {
   if (typeof navigator === "undefined") return "USD";
-  for (const lang of navigator.languages ?? [navigator.language]) {
-    const region = lang.split("-")[1]?.toUpperCase();
-    if (region && REGION_CURRENCY[region]) return REGION_CURRENCY[region];
-  }
+  // The time zone says where the traveller is; the language often doesn't (Indian browsers commonly
+  // report "en-US"), so it's only the fallback.
   try {
     const zone = Intl.DateTimeFormat().resolvedOptions().timeZone;
     if (ZONE_CURRENCY[zone]) return ZONE_CURRENCY[zone];
   } catch {
     /* ignore */
+  }
+  for (const lang of navigator.languages ?? [navigator.language]) {
+    const region = lang.split("-")[1]?.toUpperCase();
+    if (region && REGION_CURRENCY[region]) return REGION_CURRENCY[region];
   }
   return "USD";
 }
