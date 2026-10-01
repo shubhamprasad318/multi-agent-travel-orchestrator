@@ -185,8 +185,9 @@ def gemini_generator(
         light = settings.gemini_light_model if AGENT_CONFIG[agent_key].get("light") else None
         for with_search in ([True, False] if grounded and grounding_enabled else [False]):
             available = pool.available()
-            # Light agents start with the cheap model and only move up the chain when it can't answer.
-            order = [light, *(m for m in available if m != light)] if light in available else available
+            # Light agents try the cheap model, then other lite models, then the rest; the others try
+            # full models first and lite ones last. Each group keeps the chain's order.
+            order = sorted(available, key=lambda m: (m != light, "lite" not in m) if light else ("lite" in m))
             for model in order:
                 if with_search and not pool.can_ground(model):
                     continue

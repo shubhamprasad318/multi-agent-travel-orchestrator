@@ -112,7 +112,7 @@ npm run dev                     # http://localhost:3000
 | `MAX_CONCURRENT_PLANS` | `2` | Keep low on the free tier (each plan makes ~7 Gemini calls). |
 | `DEBUG` | `false` | Includes agent error details in responses. |
 | `GEMINI_FALLBACK_MODEL` | `gemini-3.5-flash-lite` | The last resort when every other model is overloaded or out of quota. |
-| `GEMINI_FALLBACK_MODELS` | `gemini-3.5-flash,gemini-2.5-flash` | Tried in order after the main model. On the free tier each model has its own daily quota, so a longer chain plans more trips a day. A model that's out of quota is skipped until it resets; one your key can't use is ignored. `/health` shows each model's state. |
+| `GEMINI_FALLBACK_MODELS` | `gemini-3.7-flash,gemini-3.6-flash,gemini-3.5-flash,gemini-3-flash-preview,gemini-2.5-flash,gemini-3.1-flash-lite` | Tried in order after the main model. On the free tier each model has its own daily quota, so a longer chain plans more trips a day. A model that's out of quota is skipped until it resets; one your key can't use is ignored. `/health` shows each model's state. |
 | `CHAT_RATE_LIMIT_PER_MINUTE` | `20` | Concierge questions per client IP. |
 | `GOOGLE_CLIENT_ID` | – | Optional. Turns on Google sign-in (accounts, trip sync, planning together). See below. |
 | `AUTH_SECRET` | random | Signs session tokens. Set a long random value in production, or everyone is signed out on restart. |

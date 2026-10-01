@@ -70,6 +70,8 @@ class Clock:
 
 def _generator(outcomes: list, pool: ModelPool | None = None, **settings_overrides):
     settings_overrides.setdefault("gemini_fallback_models", [])
+    # Every agent starts at the top of the chain unless a test turns light routing on.
+    settings_overrides.setdefault("gemini_light_model", "")
     settings = Settings(_env_file=None, google_api_key="test", **settings_overrides)
     client = ScriptedClient(outcomes)
     return gemini_generator(settings, client=client, sleep=_no_sleep, pool=pool), client, settings
@@ -202,3 +204,14 @@ async def test_light_agents_use_the_cheap_model_and_the_itinerary_the_best():
     await generate("itinerary_agent", Answer, "sys", "user")
     await generate("itinerary_agent", Answer, "sys", "user")
     assert [model for model, _ in client.calls] == ["cheap", "best", "cheap", "cheap"]
+
+
+async def test_light_agents_try_other_lite_models_before_full_ones():
+    pool = ModelPool(["best", "new-lite", "old-lite"], clock=Clock())
+    generate, client, _ = _generator(
+        [DAILY, "ok", DAILY, "ok"], pool=pool, gemini_model="best", gemini_light_model="old-lite", gemini_fallback_model=""
+    )
+    await generate("validator_agent", Answer, "sys", "user")
+    # The itinerary tries full models first and lite ones last.
+    await generate("itinerary_agent", Answer, "sys", "user")
+    assert [model for model, _ in client.calls] == ["old-lite", "new-lite", "best", "new-lite"]

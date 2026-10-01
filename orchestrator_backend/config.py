@@ -30,7 +30,16 @@ class Settings(BaseSettings):
     # Tried in order when the main model is overloaded or out of quota. On the free tier every
     # model has its own daily quota, so a longer chain plans more trips a day. Models the key
     # can't use are skipped. JSON list or comma-separated.
-    gemini_fallback_models: Annotated[list[str], NoDecode] = Field(default_factory=lambda: ["gemini-3.5-flash", "gemini-2.5-flash"])
+    gemini_fallback_models: Annotated[list[str], NoDecode] = Field(
+        default_factory=lambda: [
+            "gemini-3.7-flash",
+            "gemini-3.6-flash",
+            "gemini-3.5-flash",
+            "gemini-3-flash-preview",
+            "gemini-2.5-flash",
+            "gemini-3.1-flash-lite",
+        ]
+    )
     # The last resort (a lite model with its own, larger quota). Empty to disable.
     gemini_fallback_model: str = "gemini-3.5-flash-lite"
     # Google Search grounding (live, cited results). Falls back automatically if unavailable.
