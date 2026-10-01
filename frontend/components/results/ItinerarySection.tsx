@@ -1,14 +1,16 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { MapPin, Pencil, TrainFront } from "lucide-react";
+import { CloudRain, MapPin, Pencil, TrainFront } from "lucide-react";
 import { formatDate, isStayStop } from "@/lib/format";
 import { Price } from "@/lib/money";
 import { mapsUrl } from "@/lib/calendar";
 import { useCollab } from "@/lib/collab";
+import { MEAL_ICONS, stopIcon, weatherIcon } from "@/lib/icons";
 import type { Itinerary, Transfer, WeatherResult } from "@/lib/types";
 import StopFeedback from "./collab/StopFeedback";
 import ItineraryEditor from "./edit/ItineraryEditor";
+import { dayColor } from "./map/colors";
 import ReplanDay from "./ReplanDay";
 import { BulletList, EmptyState, ExternalLink, Section } from "./shared";
 
@@ -58,99 +60,172 @@ export default function ItinerarySection({
       {editing && planId && changeable ? (
         <ItineraryEditor planId={planId} itinerary={itinerary} onCancel={() => setEditing(false)} />
       ) : (
-      <ol className="space-y-16">
-        {itinerary.days.map((day) => (
-          <li key={day.day} className="grid gap-6 md:grid-cols-[8rem_1fr] md:gap-10 break-inside-avoid">
-            <div className="md:border-t md:border-rule md:pt-3">
-              <p className="font-serif text-7xl leading-none text-terracotta tabular-nums">{String(day.day).padStart(2, "0")}</p>
-              <p className="mt-2 text-sm text-ink-muted">{formatDate(day.date, { weekday: "long", month: "short", day: "numeric" })}</p>
-              {day.city && (
-                <p className="mt-2 inline-flex items-center gap-1 text-sm text-teal-dark">
-                  <MapPin className="h-3.5 w-3.5" aria-hidden />
-                  {day.city.split(",")[0]}
-                </p>
-              )}
-            </div>
+      <ol className="space-y-10">
+        {itinerary.days.map((day) => {
+          const color = dayColor(day.day);
+          const forecast = forecastFor(day.date);
+          const WeatherIcon = forecast ? weatherIcon(forecast.condition) : null;
+          return (
+            <li
+              key={day.day}
+              className="break-inside-avoid overflow-hidden rounded-2xl border border-rule bg-white/70 shadow-[0_1px_0_rgba(31,27,22,0.04),0_12px_32px_-20px_rgba(31,27,22,0.25)]"
+              style={{ borderTop: `4px solid ${color}` }}
+            >
+              <header className="flex flex-wrap items-start gap-x-4 gap-y-3 p-5 sm:gap-x-6 md:p-8 md:pb-6">
+                <div
+                  className="flex h-12 w-12 shrink-0 flex-col items-center justify-center rounded-xl text-paper sm:h-16 sm:w-16 sm:rounded-2xl"
+                  style={{ backgroundColor: color }}
+                >
+                  <span className="text-[10px] uppercase tracking-eyebrow opacity-80">Day</span>
+                  <span className="font-serif text-2xl leading-none tabular-nums sm:text-3xl">{day.day}</span>
+                </div>
+                <div className="min-w-0 flex-1">
+                  <p className="text-sm text-ink-muted">
+                    {formatDate(day.date, { weekday: "long", month: "short", day: "numeric" })}
+                    {day.city && (
+                      <span className="ml-2 inline-flex items-center gap-1 text-teal-dark">
+                        <MapPin className="h-3.5 w-3.5" aria-hidden />
+                        {day.city.split(",")[0]}
+                      </span>
+                    )}
+                  </p>
+                  <h3 className="mt-1 text-2xl md:text-3xl text-ink">{day.theme}</h3>
+                  {forecast && WeatherIcon && (
+                    <p className="mt-3 inline-flex flex-wrap items-center gap-x-2 rounded-xl bg-paper-deep px-3 py-1 text-sm text-ink-soft sm:rounded-full">
+                      <WeatherIcon className="h-4 w-4 text-ochre" aria-hidden />
+                      <span>{forecast.condition}</span>
+                      <span className="tabular-nums text-ink-muted">
+                        {Math.round(forecast.temp_min_c)}–{Math.round(forecast.temp_max_c)}°C
+                        {forecast.precip_chance != null && forecast.precip_chance >= 20 && ` · ${forecast.precip_chance}% rain`}
+                      </span>
+                    </p>
+                  )}
+                </div>
+                {changeable && planId && (
+                  <div className="w-full pl-16 sm:w-auto sm:pl-0">
+                    <ReplanDay planId={planId} day={day} forecast={forecast} />
+                  </div>
+                )}
+              </header>
 
-            <article className="border-t border-ink pt-3">
-              <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-2">
-                <h3 className="text-2xl md:text-3xl text-ink">{day.theme}</h3>
-                {changeable && planId && <ReplanDay planId={planId} day={day} forecast={forecastFor(day.date)} />}
-              </div>
-              {transferOn(day.date) && <TransferNote transfer={transferOn(day.date)!} />}
+              <div className="px-5 pb-6 md:px-8 md:pb-8">
+                {transferOn(day.date) && <TransferNote transfer={transferOn(day.date)!} />}
+                {day.weather_note && (
+                  <p className="mb-6 border-l-2 border-ochre pl-4 font-serif italic text-ink-soft">{day.weather_note}</p>
+                )}
 
-              {day.weather_note && (
-                <p className="mt-4 border-l-2 border-ochre pl-4 font-serif italic text-ink-soft">{day.weather_note}</p>
-              )}
-
-              <ul className="mt-6 space-y-5">
-                {day.slots.map((slot, i) => (
-                  <li key={slot.id ?? i} className="grid grid-cols-[4.5rem_1fr] gap-3">
-                    <div className="pt-0.5">
-                      <p className="text-sm tabular-nums text-ink">{slot.start_time}</p>
-                      <p className="text-[11px] uppercase tracking-eyebrow text-ink-muted">{PERIOD_LABEL[slot.period]}</p>
-                    </div>
-                    <div>
-                      <div className="flex items-baseline text-[17px]">
-                        <span className="text-ink">{slot.activity}</span>
-                        <span className="leader" aria-hidden />
-                        {slot.cost <= 0 && isStayStop(slot.activity) ? (
-                          <span className="whitespace-nowrap text-ink-soft" title="The hotel is counted under lodging in Bookings and Budget">
-                            Included in stay
-                          </span>
-                        ) : (
-                          <Price usd={slot.cost} free className="text-ink-soft" />
+                <ul className="relative">
+                  {day.slots.map((slot, i) => {
+                    const Icon = stopIcon(slot.activity);
+                    const last = i === day.slots.length - 1;
+                    return (
+                      <li key={slot.id ?? i} className="relative grid grid-cols-[2.75rem_1fr] gap-3 pb-6 last:pb-0 sm:gap-4">
+                        {!last && (
+                          <span
+                            className="absolute left-[1.375rem] top-11 bottom-0 w-px -translate-x-1/2"
+                            style={{ backgroundImage: `linear-gradient(${color} 50%, transparent 0)`, backgroundSize: "1px 6px", opacity: 0.5 }}
+                            aria-hidden
+                          />
                         )}
-                      </div>
-                      {slot.location && (
-                        <ExternalLink href={mapsUrl(slot.location, day.city ?? destination)} className="mt-1 text-xs text-ink-muted">
-                          {slot.location}
-                        </ExternalLink>
-                      )}
-                      <StopFeedback slotId={slot.id} activity={slot.activity} />
-                    </div>
-                  </li>
-                ))}
-              </ul>
-
-              {day.meals.length > 0 && (
-                <div className="mt-8">
-                  <p className="eyebrow text-ink-muted">At the table</p>
-                  <ul className="mt-3 space-y-2 text-[15px]">
-                    {day.meals.map((meal, i) => (
-                      <li key={i} className="flex items-baseline">
-                        <span className="w-20 shrink-0 capitalize text-ink-muted">{meal.type}</span>
-                        <span className="text-ink">
-                          {meal.suggestion}
-                          {meal.cuisine && <span className="text-ink-muted"> · {meal.cuisine}</span>}
+                        <span
+                          className="relative flex h-11 w-11 items-center justify-center rounded-full"
+                          style={{ backgroundColor: `${color}1A`, color }}
+                          aria-hidden
+                        >
+                          <Icon className="h-5 w-5" />
                         </span>
-                        <span className="leader" aria-hidden />
-                        <Price usd={meal.cost} className="text-ink-soft" />
+                        <div className="min-w-0 rounded-xl border border-transparent pt-0.5">
+                          <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+                            <span className="text-sm font-medium tabular-nums" style={{ color }}>
+                              {slot.start_time}
+                            </span>
+                            <span className="text-[11px] uppercase tracking-eyebrow text-ink-muted">{PERIOD_LABEL[slot.period]}</span>
+                          </div>
+                          <div className="mt-0.5 flex items-baseline gap-3 text-[17px]">
+                            <span className="min-w-0 flex-1 text-ink sm:flex-none">{slot.activity}</span>
+                            <span className="leader hidden sm:block" aria-hidden />
+                            {slot.cost <= 0 && isStayStop(slot.activity) ? (
+                              <span className="whitespace-nowrap text-sm text-ink-soft" title="The hotel is counted under lodging in Bookings and Budget">
+                                Included in stay
+                              </span>
+                            ) : slot.cost <= 0 ? (
+                              <span className="whitespace-nowrap rounded-full bg-teal-light px-2 py-0.5 text-xs font-medium text-teal-dark">Free</span>
+                            ) : (
+                              <Price usd={slot.cost} className="text-ink-soft" />
+                            )}
+                          </div>
+                          {slot.location && (
+                            <ExternalLink href={mapsUrl(slot.location, day.city ?? destination)} className="mt-1 text-xs text-ink-muted">
+                              {slot.location}
+                            </ExternalLink>
+                          )}
+                          <StopFeedback slotId={slot.id} activity={slot.activity} />
+                        </div>
                       </li>
+                    );
+                  })}
+                </ul>
+
+                {day.meals.length > 0 && (
+                  <div className="mt-8">
+                    <p className="eyebrow text-ink-muted">At the table</p>
+                    <ul className="mt-3 grid gap-3 sm:grid-cols-3">
+                      {day.meals.map((meal, i) => {
+                        const MealIcon = MEAL_ICONS[meal.type];
+                        return (
+                          <li key={i} className="flex flex-col rounded-xl bg-paper p-4">
+                            <p className="flex items-center gap-2 text-[11px] uppercase tracking-eyebrow text-ink-muted">
+                              <MealIcon className="h-4 w-4 text-terracotta" aria-hidden />
+                              {meal.type}
+                            </p>
+                            <p className="mt-2 text-[15px] leading-snug text-ink">{meal.suggestion}</p>
+                            {meal.cuisine && <p className="text-xs text-ink-muted">{meal.cuisine}</p>}
+                            <p className="mt-auto pt-3 text-sm">
+                              {meal.cost <= 0 ? (
+                                // The planner prices a meal at 0 only when the hotel includes it.
+                                <span className="text-ink-soft">Included in stay</span>
+                              ) : (
+                                <Price usd={meal.cost} className="text-ink-soft" />
+                              )}
+                            </p>
+                          </li>
+                        );
+                      })}
+                    </ul>
+                  </div>
+                )}
+
+                {day.backup_options.length > 0 && (
+                  <div className="mt-6 flex flex-wrap items-center gap-2">
+                    <span className="inline-flex items-center gap-1.5 text-[11px] uppercase tracking-eyebrow text-ink-muted">
+                      <CloudRain className="h-4 w-4" aria-hidden /> If it rains
+                    </span>
+                    {day.backup_options.map((option, i) => (
+                      <span key={i} className="rounded-full border border-rule px-3 py-1 text-sm text-ink-soft">
+                        {option}
+                      </span>
                     ))}
-                  </ul>
-                </div>
-              )}
-
-              {day.backup_options.length > 0 && (
-                <div className="mt-8">
-                  <p className="eyebrow text-ink-muted">If it rains</p>
-                  <BulletList items={day.backup_options} className="mt-3 text-[15px]" />
-                </div>
-              )}
-
-              <div className="mt-8 flex items-baseline justify-end gap-3 border-t border-rule pt-3">
-                <span className="text-sm text-ink-muted">Day total</span>
-                <Price usd={day.total_cost} className="font-serif text-2xl text-ink" localClassName="font-sans" />
+                  </div>
+                )}
               </div>
-            </article>
-          </li>
-        ))}
+
+              <footer className="flex items-baseline justify-between gap-3 bg-paper-deep/70 px-5 py-3 md:px-8">
+                <span className="text-sm text-ink-muted">
+                  {day.slots.length} stop{day.slots.length === 1 ? "" : "s"} · {day.meals.length} meal{day.meals.length === 1 ? "" : "s"}
+                </span>
+                <span className="flex items-baseline gap-3">
+                  <span className="text-sm text-ink-muted">Day total</span>
+                  <Price usd={day.total_cost} className="font-serif text-2xl text-ink" localClassName="font-sans" />
+                </span>
+              </footer>
+            </li>
+          );
+        })}
       </ol>
       )}
 
       {(itinerary.highlights.length > 0 || itinerary.tips.length > 0) && (
-        <div className="mt-16 grid gap-10 bg-paper-deep p-8 md:grid-cols-2">
+        <div className="mt-12 grid gap-10 rounded-2xl bg-teal-dark p-8 text-paper md:grid-cols-2 md:p-10 [&_.eyebrow]:text-ochre [&_li]:text-paper/90">
           {itinerary.highlights.length > 0 && (
             <div>
               <p className="eyebrow">Don&apos;t miss</p>
@@ -171,7 +246,7 @@ export default function ItinerarySection({
 
 function TransferNote({ transfer }: { transfer: Transfer }) {
   return (
-    <p className="mt-4 flex flex-wrap items-baseline gap-x-2 border-l-2 border-teal pl-4 text-ink-soft">
+    <p className="mb-6 flex flex-wrap items-baseline gap-x-2 border-l-2 border-teal pl-4 text-ink-soft">
       <TrainFront className="h-4 w-4 self-center text-teal" aria-hidden />
       <span>
         Travel day: <span className="capitalize">{transfer.mode}</span> from {transfer.from_city.split(",")[0]} to{" "}

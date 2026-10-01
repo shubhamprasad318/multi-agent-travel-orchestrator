@@ -1,7 +1,23 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { ArrowRight, Plus, X } from "lucide-react";
+import {
+  ArrowRight,
+  BookOpen,
+  Compass,
+  Cpu,
+  Landmark,
+  Moon,
+  Mountain,
+  Palette,
+  Palmtree,
+  Plus,
+  ShoppingBag,
+  Sparkles,
+  Utensils,
+  X,
+  type LucideIcon,
+} from "lucide-react";
 import { cn } from "@/lib/utils";
 import { daysBetween, toISODate } from "@/lib/format";
 import { CURRENCIES, currencySymbol, detectCurrency } from "@/lib/money";
@@ -15,6 +31,20 @@ const INTEREST_OPTIONS = [
   "Culture", "Food", "History", "Art", "Nature",
   "Adventure", "Beach", "Nightlife", "Shopping", "Technology", "Relaxation",
 ];
+
+const INTEREST_ICONS: Record<string, LucideIcon> = {
+  Culture: Landmark,
+  Food: Utensils,
+  History: BookOpen,
+  Art: Palette,
+  Nature: Mountain,
+  Adventure: Compass,
+  Beach: Palmtree,
+  Nightlife: Moon,
+  Shopping: ShoppingBag,
+  Technology: Cpu,
+  Relaxation: Sparkles,
+};
 
 const PACE_OPTIONS: { value: Pace; title: string; desc: string }[] = [
   { value: "relaxed", title: "Relaxed", desc: "One or two things a day, long lunches" },
@@ -369,6 +399,7 @@ export default function PlanForm({ onSubmit, initialValues, initialDestination }
           <div className="flex flex-wrap gap-2">
             {INTEREST_OPTIONS.map((interest) => {
               const selected = form.interests.includes(interest);
+              const Icon = INTEREST_ICONS[interest];
               return (
                 <button
                   key={interest}
@@ -376,10 +407,11 @@ export default function PlanForm({ onSubmit, initialValues, initialDestination }
                   aria-pressed={selected}
                   onClick={() => toggleInterest(interest)}
                   className={cn(
-                    "rounded-full border px-4 py-2 text-sm transition-colors",
-                    selected ? "border-ink bg-ink text-paper" : "border-rule text-ink-soft hover:border-ink"
+                    "inline-flex items-center gap-2 rounded-full border px-4 py-2 text-sm transition-colors",
+                    selected ? "border-terracotta bg-terracotta text-paper" : "border-rule bg-white/60 text-ink-soft hover:border-ink"
                   )}
                 >
+                  <Icon className={cn("h-4 w-4", selected ? "text-paper" : "text-terracotta")} aria-hidden />
                   {interest}
                 </button>
               );

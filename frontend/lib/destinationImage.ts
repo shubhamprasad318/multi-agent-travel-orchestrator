@@ -35,7 +35,16 @@ async function lookup(title: string, signal?: AbortSignal): Promise<DestinationI
   return { url, title: data.title ?? title, pageUrl: data.content_urls?.desktop?.page ?? "https://en.wikipedia.org" };
 }
 
-/** Tries "Kyoto, Japan", then "Kyoto". Returns null when nothing suitable exists. */
+/** The best-matching article title for free text like "Jamshedpur Jharkhand" (no comma to split on). */
+async function searchTitle(query: string, signal?: AbortSignal): Promise<string | null> {
+  const params = new URLSearchParams({ action: "query", format: "json", origin: "*", list: "search", srsearch: query, srlimit: "1" });
+  const response = await fetch(`https://en.wikipedia.org/w/api.php?${params}`, { signal });
+  if (!response.ok) return null;
+  const data = (await response.json()) as { query?: { search?: { title: string }[] } };
+  return data.query?.search?.[0]?.title ?? null;
+}
+
+/** Tries "Kyoto, Japan", then "Kyoto", then a Wikipedia search. Returns null when nothing suitable exists. */
 export async function fetchDestinationImage(destination: string, signal?: AbortSignal): Promise<DestinationImage | null> {
   const key = destination.trim().toLowerCase();
   if (cache.has(key)) return cache.get(key) ?? null;
@@ -51,6 +60,13 @@ export async function fetchDestinationImage(destination: string, signal?: AbortS
       if (signal?.aborted) return null;
     }
   }
-  cache.set(key, null);
-  return null;
+  try {
+    const title = await searchTitle(destination.trim(), signal);
+    const found = title && !candidates.includes(title) ? await lookup(title, signal) : null;
+    cache.set(key, found);
+    return found;
+  } catch {
+    if (!signal?.aborted) cache.set(key, null);
+    return null;
+  }
 }

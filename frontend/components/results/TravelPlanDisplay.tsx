@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { AlertTriangle } from "lucide-react";
+import { AlertTriangle, Award, CalendarDays, Users, Wallet } from "lucide-react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useCollab } from "@/lib/collab";
 import { MoneyProvider, moneyFor } from "@/lib/money";
@@ -61,12 +61,22 @@ export default function TravelPlanDisplay({ plan }: { plan: TravelPlan }) {
     window.history.replaceState(null, "", `${window.location.pathname}${window.location.search}#${value}`);
   };
 
+  const spentPct = budget.total_budget > 0 ? (budget.estimated_total / budget.total_budget) * 100 : 0;
+  const budgetBar = (
+    <span className="mt-3 block h-1.5 w-full max-w-[12rem] overflow-hidden rounded-full bg-rule" aria-hidden>
+      <span
+        className={cn("block h-full rounded-full", spentPct > 100 ? "bg-terracotta" : "bg-teal")}
+        style={{ width: `${Math.min(100, spentPct)}%` }}
+      />
+    </span>
+  );
   const glance = [
-    { label: "Duration", value: `${trip.days} day${trip.days === 1 ? "" : "s"}`, note: `${trip.nights} night${trip.nights === 1 ? "" : "s"}` },
-    { label: "Estimated cost", value: money.format(budget.estimated_total), note: <span className={BUDGET_TONE[budget.status]}>{budget.status.toLowerCase()} · budget {money.format(budget.total_budget)}</span> },
-    { label: "Per traveler", value: money.format(budget.estimated_total / trip.travelers), note: `${trip.travelers} traveler${trip.travelers === 1 ? "" : "s"}` },
+    { label: "Duration", icon: CalendarDays, value: `${trip.days} day${trip.days === 1 ? "" : "s"}`, note: `${trip.nights} night${trip.nights === 1 ? "" : "s"}` },
+    { label: "Estimated cost", icon: Wallet, extra: budgetBar, value: money.format(budget.estimated_total), note: <span className={BUDGET_TONE[budget.status]}>{budget.status.toLowerCase()} · budget {money.format(budget.total_budget)}</span> },
+    { label: "Per traveler", icon: Users, value: money.format(budget.estimated_total / trip.travelers), note: `${trip.travelers} traveler${trip.travelers === 1 ? "" : "s"}` },
     {
       label: "Editor's score",
+      icon: Award,
       value: validation ? `${validation.overall_score}` : "—",
       note: validation ? <span className={STATUS_STYLE[validation.status].tone}>{STATUS_STYLE[validation.status].label.toLowerCase()}</span> : "not validated",
     },
@@ -99,9 +109,13 @@ export default function TravelPlanDisplay({ plan }: { plan: TravelPlan }) {
         <dl className="grid grid-cols-2 lg:grid-cols-4 border-b border-rule">
           {glance.map((item, i) => (
             <div key={item.label} className={cn("py-6 pr-4", i > 0 && "lg:border-l lg:border-rule lg:pl-6", i % 2 === 1 && "border-l border-rule pl-6 lg:pl-6")}>
-              <dt className="text-xs uppercase tracking-eyebrow text-ink-muted">{item.label}</dt>
+              <dt className="flex items-center gap-2 text-xs uppercase tracking-eyebrow text-ink-muted">
+                <item.icon className="h-4 w-4 text-terracotta" aria-hidden />
+                {item.label}
+              </dt>
               <dd className="mt-1 font-serif text-3xl md:text-4xl text-ink tabular-nums">{item.value}</dd>
               <dd className="mt-1 text-sm text-ink-muted">{item.note}</dd>
+              {"extra" in item && item.extra}
             </div>
           ))}
         </dl>
