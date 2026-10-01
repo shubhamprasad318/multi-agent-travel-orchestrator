@@ -103,7 +103,8 @@ npm run dev                     # http://localhost:3000
 | Variable | Default | Notes |
 |----------|---------|-------|
 | `GOOGLE_API_KEY` | – | **Required.** |
-| `GEMINI_MODEL` | `gemini-3.8-flash` | Gemini 2.5 models are closed to new projects; use a 3.x model. |
+| `GEMINI_MODEL` | `gemini-3.8-flash` | The best model; writes the itinerary and day re-plans. Free tier: ~20 requests a day. |
+| `GEMINI_LIGHT_MODEL` | `gemini-3.5-flash-lite` | The cheapest Gemini 3 model (~500 free requests a day): research, weather, activities, bookings, the validator and chat. Empty to use `GEMINI_MODEL` for everything. |
 | `ENABLE_GROUNDING` | `true` | Google Search grounding. Automatically switches off if your key/model doesn't support it. |
 | `MONGODB_URI` | – | Optional. Without it, plans are kept in memory and lost on restart. |
 | `CORS_ORIGINS` | `["http://localhost:3000"]` | JSON list of allowed frontend origins. |

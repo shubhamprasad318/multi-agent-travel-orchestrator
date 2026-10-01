@@ -190,3 +190,15 @@ async def test_identical_requests_are_answered_from_the_cache():
     # Itineraries are never cached.
     await cached("itinerary_agent", Answer, "sys", "same trip")
     assert len(client.calls) == 3
+
+
+async def test_light_agents_use_the_cheap_model_and_the_itinerary_the_best():
+    pool = ModelPool(["best", "cheap"], clock=Clock())
+    generate, client, _ = _generator(
+        ["ok", DAILY, "ok", "ok"], pool=pool, gemini_model="best", gemini_light_model="cheap", gemini_fallback_model=""
+    )
+    await generate("research_agent", Answer, "sys", "user")
+    # The best model is out of quota today, so the itinerary falls back to the cheap one.
+    await generate("itinerary_agent", Answer, "sys", "user")
+    await generate("itinerary_agent", Answer, "sys", "user")
+    assert [model for model, _ in client.calls] == ["cheap", "best", "cheap", "cheap"]

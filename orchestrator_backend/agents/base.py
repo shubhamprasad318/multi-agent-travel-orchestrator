@@ -158,15 +158,14 @@ def gemini_generator(
         if client is None:
             raise RuntimeError("GOOGLE_API_KEY is not set")
         cfg = AGENT_CONFIG[agent_key]
-        primary = model == settings.gemini_model
         config = types.GenerateContentConfig(
             system_instruction=system,
             temperature=cfg["temperature"],
             max_output_tokens=cfg["max_tokens"],
             response_mime_type="application/json",
             response_schema=schema,
-            # Fallbacks run with their default thinking settings (not every model takes a level).
-            thinking_config=types.ThinkingConfig(thinking_level=cfg.get("thinking", "low")) if primary else None,
+            # Thinking levels are a Gemini 3 setting; older fallbacks run with their defaults.
+            thinking_config=types.ThinkingConfig(thinking_level=cfg.get("thinking", "low")) if model.startswith("gemini-3") else None,
             tools=[types.Tool(google_search=types.GoogleSearch())] if grounded else None,
             # Built-in tools only; no client-side function calling to run.
             automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True),
@@ -183,8 +182,12 @@ def gemini_generator(
         checked places beat a stronger model guessing); only then is it sent without search.
         """
         saw_quota = False
+        light = settings.gemini_light_model if AGENT_CONFIG[agent_key].get("light") else None
         for with_search in ([True, False] if grounded and grounding_enabled else [False]):
-            for model in pool.available():
+            available = pool.available()
+            # Light agents start with the cheap model and only move up the chain when it can't answer.
+            order = [light, *(m for m in available if m != light)] if light in available else available
+            for model in order:
                 if with_search and not pool.can_ground(model):
                     continue
                 retries_left = 1

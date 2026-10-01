@@ -22,7 +22,11 @@ class Settings(BaseSettings):
 
     # Gemini via Google AI Studio (https://aistudio.google.com/apikey). Required.
     google_api_key: str | None = None
+    # The best model: writes the itinerary (and day re-plans), where quality shows most.
     gemini_model: str = "gemini-3.8-flash"
+    # The cheapest Gemini 3 model (~25x the free daily quota): research, weather, activities,
+    # bookings, the validator and chat. Empty to use gemini_model for everything.
+    gemini_light_model: str = "gemini-3.5-flash-lite"
     # Tried in order when the main model is overloaded or out of quota. On the free tier every
     # model has its own daily quota, so a longer chain plans more trips a day. Models the key
     # can't use are skipped. JSON list or comma-separated.
@@ -69,8 +73,8 @@ class Settings(BaseSettings):
 
     @property
     def gemini_models(self) -> list[str]:
-        """The full model chain, in the order models are tried."""
-        chain = [self.gemini_model, *self.gemini_fallback_models, self.gemini_fallback_model]
+        """The full model chain, in the order the best-model agents try them."""
+        chain = [self.gemini_model, *self.gemini_fallback_models, self.gemini_light_model, self.gemini_fallback_model]
         return list(dict.fromkeys(m.strip() for m in chain if m and m.strip()))
 
     @field_validator("cors_origins", "gemini_fallback_models", mode="before")
@@ -103,17 +107,18 @@ def get_settings() -> Settings:
 
 AGENT_CONFIG = {
     # `thinking` is the Gemini 3 thinking level: more = better reasoning, slower.
+    # `light`: start with the cheap model (settings.gemini_light_model), falling back up the chain.
     # `cache_hours`: identical requests (same trip) reuse the answer for this long, saving quota
     # when a trip is planned again. Itinerary, validator and chat are never cached.
-    "research_agent": {"temperature": 0.5, "max_tokens": 8000, "thinking": "low", "cache_hours": 72},
-    "weather_agent": {"temperature": 0.2, "max_tokens": 8000, "thinking": "low", "cache_hours": 6},
-    "activity_agent": {"temperature": 0.8, "max_tokens": 10000, "thinking": "low", "cache_hours": 72},
-    "booking_agent": {"temperature": 0.3, "max_tokens": 8000, "thinking": "low", "cache_hours": 12},
+    "research_agent": {"temperature": 0.5, "max_tokens": 8000, "thinking": "low", "cache_hours": 72, "light": True},
+    "weather_agent": {"temperature": 0.2, "max_tokens": 8000, "thinking": "low", "cache_hours": 6, "light": True},
+    "activity_agent": {"temperature": 0.8, "max_tokens": 10000, "thinking": "low", "cache_hours": 72, "light": True},
+    "booking_agent": {"temperature": 0.3, "max_tokens": 8000, "thinking": "low", "cache_hours": 12, "light": True},
     "itinerary_agent": {"temperature": 0.6, "max_tokens": 24000, "thinking": "medium"},
-    "validator_agent": {"temperature": 0.1, "max_tokens": 8000, "thinking": "medium"},
+    "validator_agent": {"temperature": 0.1, "max_tokens": 8000, "thinking": "medium", "light": True},
     # Used only by the offline evaluation harness (evals/).
     "judge_agent": {"temperature": 0.0, "max_tokens": 4000, "thinking": "low"},
-    "chat_agent": {"temperature": 0.5, "max_tokens": 4000, "thinking": "low"},
+    "chat_agent": {"temperature": 0.5, "max_tokens": 4000, "thinking": "low", "light": True},
     "replan_agent": {"temperature": 0.6, "max_tokens": 8000, "thinking": "medium"},
 }
 
