@@ -77,22 +77,18 @@ def _generator(outcomes: list, pool: ModelPool | None = None, **settings_overrid
     return gemini_generator(settings, client=client, sleep=_no_sleep, pool=pool), client, settings
 
 
-async def test_search_quota_on_one_model_moves_search_to_the_next_model():
-    pool = ModelPool(["main", "lite"], clock=Clock())
-    generate, client, _ = _generator([429, "ok", "ok"], pool=pool, gemini_model="main", gemini_fallback_model="lite")
+async def test_search_quota_pauses_search_on_every_model_at_once():
+    clock = Clock()
+    pool = ModelPool(["main", "lite"], clock=clock)
+    generate, client, _ = _generator([429, "ok", "ok", "ok"], pool=pool, gemini_model="main", gemini_fallback_model="lite")
 
     assert (await generate("research_agent", Answer, "sys", "user", grounded=True)).text == "ok"
-    # During the cooldown the next grounded call goes straight to the model that can still search.
+    # The search quota is shared, so no other model is asked to search during the cooldown.
+    await generate("activity_agent", Answer, "sys", "user", grounded=True)
+    clock.now += 1801
     await generate("activity_agent", Answer, "sys", "user", grounded=True)
 
-    assert client.calls == [("main", True), ("lite", True), ("lite", True)]
-
-
-async def test_without_any_search_left_grounded_calls_go_ungrounded():
-    pool = ModelPool(["main", "lite"], clock=Clock())
-    generate, client, _ = _generator([429, 429, "ok"], pool=pool, gemini_model="main", gemini_fallback_model="lite")
-    await generate("research_agent", Answer, "sys", "user", grounded=True)
-    assert client.calls == [("main", True), ("lite", True), ("main", False)]
+    assert client.calls == [("main", True), ("main", False), ("main", False), ("main", True)]
 
 
 async def test_overloaded_primary_falls_back_to_lite_model():

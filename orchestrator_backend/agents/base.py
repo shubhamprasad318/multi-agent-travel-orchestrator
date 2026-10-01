@@ -119,8 +119,8 @@ class LLMUnavailableError(RuntimeError):
 
 # Overload and timeouts: worth one short retry on the same model.
 TRANSIENT_STATUS = (500, 502, 503, 504)
-# Grounding's own quota ran out: call without Google Search for this long.
-GROUNDING_COOLDOWN_SECONDS = 600
+# Google Search's quota (shared by every model) ran out: plan without search for this long.
+GROUNDING_COOLDOWN_SECONDS = 1800
 
 
 def gemini_generator(
@@ -134,9 +134,10 @@ def gemini_generator(
     Models are tried in `settings.gemini_models` order (see utils.models):
     1. Out of quota (429): the model rests until its quota resets (per minute,
        or midnight Pacific for the daily quota) and the next model is tried at
-       once. A 429 for Google Search's quota rests search on that model only.
-    2. Grounded requests try every model that can still search before going
-       without; a model that refuses search (400/403) is never grounded again.
+       once. A 429 for Google Search's quota (shared by every model) pauses
+       search everywhere for a while.
+    2. Grounded requests try the models that can search before going without;
+       a model that refuses search (400/403) is never grounded again.
     3. Overload and timeouts (5xx) get one short retry, then the next model.
     4. A model the key can't use (404) is dropped from the chain.
     `client`, `sleep` and `pool` are injectable for tests.
@@ -178,8 +179,8 @@ def gemini_generator(
     async def attempt_all(agent_key: str, schema: type[T], system: str, user: str, grounded: bool) -> tuple[Any, bool]:
         """Returns (response, whether it was grounded).
 
-        A grounded request first goes to every model that can still use Google Search (real,
-        checked places beat a stronger model guessing); only then is it sent without search.
+        A grounded request first goes to the models that can use Google Search (real, checked
+        places beat a stronger model guessing); only then is it sent without search.
         """
         saw_quota = False
         light = settings.gemini_light_model if AGENT_CONFIG[agent_key].get("light") else None
@@ -201,9 +202,10 @@ def gemini_generator(
                     if status == 429:
                         quota = parse_quota_error(error)
                         if with_search and (quota.grounding or not (quota.daily or quota.retry_after)):
-                            # This model's Google Search quota (a bare 429 on a grounded call): it can still answer without.
-                            pool.rest_grounding(model, GROUNDING_COOLDOWN_SECONDS)
-                            logger.warning("%s: Google Search quota used up on %s; trying search on the next model", agent_key, model)
+                            # Google Search's quota (a bare 429 on a grounded call). It's shared by every model, so
+                            # search pauses everywhere and this call goes on without it.
+                            if pool.rest_search(GROUNDING_COOLDOWN_SECONDS):
+                                logger.warning("Google Search quota used up; planning without search for %d min", GROUNDING_COOLDOWN_SECONDS // 60)
                         else:
                             saw_quota = True
                             pool.rest_after_quota(model, quota)
@@ -211,7 +213,7 @@ def gemini_generator(
                         break
                     if with_search and status in (400, 403):
                         pool.disable_grounding(model)
-                        logger.warning("Google Search grounding not available on %s; it's called without", model)
+                        logger.info("Google Search grounding not available on %s; it's called without", model)
                         break
                     if status == 404:
                         pool.drop(model, "not available for this API key")

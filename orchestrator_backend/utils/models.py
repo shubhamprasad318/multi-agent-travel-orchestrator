@@ -69,8 +69,8 @@ class ModelPool:
     _dropped: set[str] = field(default_factory=set)
     # Models whose grounded calls were refused (400/403): called without Google Search.
     _no_grounding: set[str] = field(default_factory=set)
-    # Models whose Google Search quota ran out, until when.
-    _grounding_resting_until: dict[str, float] = field(default_factory=dict)
+    # Google Search's quota is shared by every model on the key: when it runs out, search rests until then.
+    _search_resting_until: float = 0.0
 
     def available(self) -> list[str]:
         now = self.clock()
@@ -91,13 +91,16 @@ class ModelPool:
         self._reason[model] = reason
 
     def can_ground(self, model: str) -> bool:
-        return model not in self._no_grounding and self._grounding_resting_until.get(model, 0.0) <= self.clock()
+        return model not in self._no_grounding and self._search_resting_until <= self.clock()
 
     def disable_grounding(self, model: str) -> None:
         self._no_grounding.add(model)
 
-    def rest_grounding(self, model: str, seconds: float) -> None:
-        self._grounding_resting_until[model] = self.clock() + seconds
+    def rest_search(self, seconds: float) -> bool:
+        """Pauses Google Search on every model. False when it was already paused (another call got there first)."""
+        already = self._search_resting_until > self.clock()
+        self._search_resting_until = max(self._search_resting_until, self.clock() + seconds)
+        return not already
 
     def status(self) -> list[dict[str, Any]]:
         """For /health: each model and, when it can't be used, why and for how long."""
