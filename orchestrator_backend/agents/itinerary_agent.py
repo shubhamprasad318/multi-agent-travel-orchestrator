@@ -7,6 +7,7 @@ from schemas import (
     ActivitiesResult,
     BookingsResult,
     DayPlan,
+    Hotel,
     Itinerary,
     Meal,
     Period,
@@ -54,7 +55,11 @@ SYSTEM = SYSTEM_BASE + (
     "USD; slot costs cover tickets and local transport, meal costs cover food. Keep the sum of "
     "all slot and meal costs within the on-the-ground budget by choosing cheaper options, never "
     "by understating prices: every cost is a realistic price, and a meal costs 0 only when it is "
-    "genuinely included (such as a hotel breakfast). Use empty weather_note when "
+    "genuinely included (a hotel breakfast only when the hotel includes breakfast). Every full "
+    "day has breakfast, lunch and dinner; when the hotel doesn't include breakfast, suggest a "
+    "local breakfast place with its price. Day 1 starts "
+    "on arrival: no meals before the traveller arrives (no hotel breakfast before check-in). On "
+    "the last day, no meals after departure. Use empty weather_note when "
     "there is nothing to say. Give the latitude and longitude of each slot's location as "
     "accurately as you can. On a multi-city trip, each day is spent in the city given for it: "
     "on a travel day, plan the transfer in the morning and only light plans in the new city."
@@ -111,7 +116,27 @@ def accommodation_text(bookings: BookingsResult | None) -> str:
     hotels = selected_hotels(bookings)
     if not hotels:
         return "(not chosen)"
-    return "; ".join(f"{f'{h.city}: ' if h.city else ''}{h.name} in {h.area}" for h in hotels)
+    return "; ".join(
+        f"{f'{h.city}: ' if h.city else ''}{h.name} in {h.area} "
+        f"({'breakfast included' if _includes_breakfast(h) else 'breakfast not included'})"
+        for h in hotels
+    )
+
+
+def _includes_breakfast(hotel: Hotel) -> bool:
+    return any("breakfast" in amenity.lower() for amenity in hotel.amenities)
+
+
+MEAL_PERIOD: dict[str, Period] = {"breakfast": "morning", "lunch": "afternoon", "dinner": "evening"}
+PERIOD_ORDER: dict[str, int] = {"morning": 0, "afternoon": 1, "evening": 2}
+
+
+def arrival_day_meals(meals: list[Meal], slots: list[SlotDraft]) -> list[Meal]:
+    """Day 1 starts on arrival: drop meals before the first plan (no hotel breakfast before check-in)."""
+    if not slots:
+        return meals
+    arrival = min(PERIOD_ORDER[s.period] for s in slots)
+    return [m for m in meals if PERIOD_ORDER[MEAL_PERIOD[m.type]] >= arrival]
 
 
 def _activity_lines(activities: ActivitiesResult | None) -> str:
@@ -205,6 +230,7 @@ async def run(
             lng=s.lng if ok else None,
         )
 
+    meals_for = {n: arrival_day_meals(d.meals, d.slots) if n == 1 else d.meals for n, d in ordered}
     days = [
         DayPlan(
             day=n,
@@ -212,10 +238,10 @@ async def run(
             city=day_cities[n - 1] if request.stops else None,
             theme=d.theme,
             slots=[to_slot(s) for s in d.slots],
-            meals=d.meals,
+            meals=meals_for[n],
             backup_options=d.backup_options,
             weather_note=d.weather_note.strip() or None,
-            total_cost=round(sum(max(0.0, s.cost) for s in d.slots) + sum(m.cost for m in d.meals), 2),
+            total_cost=round(sum(max(0.0, s.cost) for s in d.slots) + sum(m.cost for m in meals_for[n]), 2),
         )
         for n, d in ordered
     ]

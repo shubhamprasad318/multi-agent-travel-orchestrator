@@ -103,3 +103,14 @@ def test_spent_budget_asks_for_realistic_prices_not_zero():
     assert "realistic prices" in _ground_budget_line(0.0, request)
     assert "realistic prices" in _ground_budget_line(20.0, request)
     assert _ground_budget_line(600.0, request).startswith("On-the-ground budget (activities")
+
+
+def test_arrival_day_drops_meals_before_check_in():
+    from agents.itinerary_agent import SlotDraft, arrival_day_meals
+    from schemas import Meal
+
+    meals = [Meal(type=t, suggestion="x", cuisine="", cost=0) for t in ("breakfast", "lunch", "dinner")]
+    afternoon = SlotDraft(period="afternoon", start_time="14:00", activity="Check-in", location="Hotel", cost=0, lat=0, lng=0)
+    morning = afternoon.model_copy(update={"period": "morning"})
+    assert [m.type for m in arrival_day_meals(meals, [afternoon])] == ["lunch", "dinner"]
+    assert len(arrival_day_meals(meals, [morning, afternoon])) == 3
