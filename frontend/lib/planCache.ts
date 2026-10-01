@@ -1,6 +1,6 @@
 import { offlineEntryForTrip, saveOffline } from "@/lib/offline";
 import { recordTrip } from "@/lib/tripsIndex";
-import type { TravelPlan } from "@/lib/types";
+import type { TravelPlan, TravelRequest } from "@/lib/types";
 
 // Session cache so the results page renders instantly after planning; the
 // backend (GET /api/v1/plans/:id) remains the source of truth for shared links.
@@ -23,6 +23,26 @@ export function getCachedPlan(id: string): TravelPlan | null {
   try {
     const raw = sessionStorage.getItem(key(id));
     return raw ? (JSON.parse(raw) as TravelPlan) : null;
+  } catch {
+    return null;
+  }
+}
+
+// The last request sent to the planner, so /plan can restore its form.
+const LAST_REQUEST_KEY = "travelPlanLastRequest";
+
+export function rememberRequest(request: TravelRequest): void {
+  try {
+    sessionStorage.setItem(LAST_REQUEST_KEY, JSON.stringify(request));
+  } catch {
+    /* storage unavailable */
+  }
+}
+
+export function getRememberedRequest(): TravelRequest | null {
+  try {
+    const saved = sessionStorage.getItem(LAST_REQUEST_KEY);
+    return saved ? (JSON.parse(saved) as TravelRequest) : null;
   } catch {
     return null;
   }

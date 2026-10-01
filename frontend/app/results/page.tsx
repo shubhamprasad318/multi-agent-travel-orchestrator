@@ -3,8 +3,8 @@
 import { Suspense, useEffect, useState } from "react";
 import Image from "next/image";
 import Link from "next/link";
-import { useSearchParams } from "next/navigation";
-import { ArrowLeft, CalendarPlus, Check, CloudDownload, Loader2, Printer, Share2, WifiOff } from "lucide-react";
+import { useRouter, useSearchParams } from "next/navigation";
+import { AlertCircle, ArrowLeft, CalendarPlus, Check, CloudDownload, Loader2, Printer, Share2, WifiOff } from "lucide-react";
 import { InviteBanner, PlanTogetherButton } from "@/components/results/collab/PlanTogether";
 import TravelPlanDisplay from "@/components/results/TravelPlanDisplay";
 import { ApiError, getTravelPlan } from "@/lib/api";
@@ -13,7 +13,7 @@ import { downloadIcs } from "@/lib/calendar";
 import { fetchDestinationImage, type DestinationImage } from "@/lib/destinationImage";
 import { formatDate, primaryPlace, shortRoute } from "@/lib/format";
 import { getOfflinePlan, offlineEntryForTrip, saveOffline, subscribeOffline } from "@/lib/offline";
-import { cachePlan, getCachedPlan } from "@/lib/planCache";
+import { cachePlan, getCachedPlan, rememberRequest } from "@/lib/planCache";
 import { cn } from "@/lib/utils";
 import type { TravelPlan } from "@/lib/types";
 
@@ -31,20 +31,28 @@ function Results() {
   const [error, setError] = useState<string | null>(null);
   // Showing the copy saved on this device because the server couldn't be reached.
   const [fromOffline, setFromOffline] = useState(false);
+  // Shown from this tab's copy, but the server no longer has it (e.g. plans kept in memory and the
+  // backend restarted), so changes, chat and sharing would fail.
+  const [lost, setLost] = useState(false);
 
   useEffect(() => {
     setError(null);
     setFromOffline(false);
+    setLost(false);
     if (!id) {
       setError("No plan selected.");
       return;
     }
+    const controller = new AbortController();
     const cached = getCachedPlan(id);
     if (cached) {
+      // Render instantly, then check the server still has it.
       setPlan(cached);
-      return;
+      getTravelPlan(id, controller.signal).catch((err) => {
+        if (!controller.signal.aborted && err instanceof ApiError && err.status === 404) setLost(true);
+      });
+      return () => controller.abort();
     }
-    const controller = new AbortController();
     getTravelPlan(id, controller.signal)
       .then((fetched) => {
         cachePlan(fetched);
@@ -90,9 +98,31 @@ function Results() {
           </p>
         </div>
       )}
+      {lost && <LostPlanBanner plan={plan} />}
       <InviteBanner plan={plan} />
       <TravelPlanDisplay plan={plan} />
     </CollabProvider>
+  );
+}
+
+function LostPlanBanner({ plan }: { plan: TravelPlan }) {
+  const router = useRouter();
+  const planAgain = () => {
+    rememberRequest(plan.request);
+    router.push("/plan");
+  };
+  return (
+    <div className="container print:hidden">
+      <div role="alert" className="mt-6 flex flex-wrap items-center gap-x-4 gap-y-3 border-l-4 border-terracotta bg-terracotta-light/60 px-4 py-3 text-sm text-ink">
+        <p className="flex flex-1 items-center gap-2">
+          <AlertCircle className="h-4 w-4 shrink-0 text-terracotta" aria-hidden /> This trip is no longer saved on the
+          server, so it can&apos;t be changed, chatted about or shared. This is the copy from this browser tab.
+        </p>
+        <button type="button" onClick={planAgain} className="rounded-full bg-ink px-4 py-2 text-paper hover:bg-terracotta">
+          Plan it again
+        </button>
+      </div>
+    </div>
   );
 }
 

@@ -4,6 +4,7 @@ import "leaflet/dist/leaflet.css";
 import { useEffect, useMemo } from "react";
 import L from "leaflet";
 import { MapContainer, Marker, Polyline, Popup, TileLayer, useMap } from "react-leaflet";
+import { isStayStop } from "@/lib/format";
 import { useMoney } from "@/lib/money";
 import type { DayPlan } from "@/lib/types";
 import { dayColor } from "./colors";
@@ -69,11 +70,18 @@ export default function TripMap({ days }: { days: DayPlan[] }) {
   const centre: [number, number] = stops.length ? [stops[0].lat, stops[0].lng] : [20, 0];
 
   return (
-    <MapContainer center={centre} zoom={12} scrollWheelZoom={false} className="h-[480px] w-full z-0 border border-rule">
+    <MapContainer center={centre} zoom={12} maxZoom={16} scrollWheelZoom={false} className="h-[480px] w-full z-0 border border-rule">
       <TileLayer
-        // Muted CARTO "Positron" basemap so the coloured day routes stand out.
-        attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>'
-        url="https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png"
+        // Muted Esri "Light Gray Canvas" basemap (free, no key) so the coloured day routes stand out.
+        // CARTO's basemaps now need an API key and show a watermark without one.
+        attribution='Tiles &copy; <a href="https://www.esri.com">Esri</a> &mdash; Esri, HERE, Garmin, &copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+        url="https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Light_Gray_Base/MapServer/tile/{z}/{y}/{x}"
+        maxZoom={16}
+      />
+      <TileLayer
+        // Place and street names, drawn above the base.
+        url="https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Light_Gray_Reference/MapServer/tile/{z}/{y}/{x}"
+        maxZoom={16}
       />
       <FitBounds stops={stops} />
       {routes.map(([day, points]) => (
@@ -89,7 +97,8 @@ export default function TripMap({ days }: { days: DayPlan[] }) {
             {stop.activity}
             <br />
             <span style={{ color: "#6b7280" }}>
-              {stop.location} · {stop.cost > 0 ? money.format(stop.cost) : "Free"}
+              {stop.location} ·{" "}
+              {stop.cost > 0 ? money.format(stop.cost) : isStayStop(stop.activity) ? "Included in stay" : "Free"}
             </span>
           </Popup>
         </Marker>

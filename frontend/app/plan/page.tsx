@@ -8,10 +8,9 @@ import PlanForm from "@/components/plan/PlanForm";
 import AgentGraph, { type NodeState } from "@/components/trace/AgentGraph";
 import TraceTimeline from "@/components/trace/TraceTimeline";
 import { createTravelPlan } from "@/lib/api";
-import { cachePlan } from "@/lib/planCache";
+import { cachePlan, getRememberedRequest, rememberRequest } from "@/lib/planCache";
 import type { AgentName, ProgressEvent, TraceStep, TravelRequest } from "@/lib/types";
 
-const LAST_REQUEST_KEY = "travelPlanLastRequest";
 
 export default function PlanPage() {
   return (
@@ -36,14 +35,10 @@ function Planner() {
 
   // Restore the previous request so a failed attempt doesn't wipe the form.
   useEffect(() => {
-    try {
-      const saved = sessionStorage.getItem(LAST_REQUEST_KEY);
-      if (saved) {
-        setLastRequest(JSON.parse(saved));
-        setFormKey((k) => k + 1);
-      }
-    } catch {
-      /* storage unavailable */
+    const saved = getRememberedRequest();
+    if (saved) {
+      setLastRequest(saved);
+      setFormKey((k) => k + 1);
     }
     return () => abortRef.current?.abort();
   }, []);
@@ -69,11 +64,7 @@ function Planner() {
   const handleSubmit = async (request: TravelRequest) => {
     setLastRequest(request);
     setDestination(undefined);
-    try {
-      sessionStorage.setItem(LAST_REQUEST_KEY, JSON.stringify(request));
-    } catch {
-      /* storage unavailable */
-    }
+    rememberRequest(request);
     setIsLoading(true);
     setError(null);
     setNodes({});

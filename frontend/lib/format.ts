@@ -43,3 +43,8 @@ export function shortRoute(destination: string): string {
   const places = destination.split(ROUTE_JOINER);
   return places.length > 1 ? places.map((p) => p.split(",")[0].trim()).join(ROUTE_JOINER) : destination;
 }
+
+/** Hotel check-in/out stops are priced at 0 because the stay is counted under lodging, not because they're free. */
+export function isStayStop(activity: string): boolean {
+  return /\bcheck[\s-]?(in|out)\b/i.test(activity);
+}

@@ -93,3 +93,13 @@ def test_plausible_points_uses_a_robust_centre():
 
     tokyo = [(35.68, 139.76), (35.71, 139.79), (35.66, 139.70), (35.36, 138.73)]  # last: Mt Fuji day trip
     assert plausible_points(tokyo + [(40.71, -74.0), (0.0, 0.0), (95.0, 10.0)]) == [True] * 4 + [False] * 3
+
+
+def test_spent_budget_asks_for_realistic_prices_not_zero():
+    # A budget used up by flights and lodging must not tell the model "$0", or it prices meals at 0.
+    from agents.itinerary_agent import _ground_budget_line
+
+    request = make_request()  # 3 days, 2 travellers
+    assert "realistic prices" in _ground_budget_line(0.0, request)
+    assert "realistic prices" in _ground_budget_line(20.0, request)
+    assert _ground_budget_line(600.0, request).startswith("On-the-ground budget (activities")

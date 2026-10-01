@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { MapPin, Pencil, TrainFront } from "lucide-react";
-import { formatDate } from "@/lib/format";
+import { formatDate, isStayStop } from "@/lib/format";
 import { Price } from "@/lib/money";
 import { mapsUrl } from "@/lib/calendar";
 import { useCollab } from "@/lib/collab";
@@ -94,7 +94,13 @@ export default function ItinerarySection({
                       <div className="flex items-baseline text-[17px]">
                         <span className="text-ink">{slot.activity}</span>
                         <span className="leader" aria-hidden />
-                        <Price usd={slot.cost} free className="text-ink-soft" />
+                        {slot.cost <= 0 && isStayStop(slot.activity) ? (
+                          <span className="whitespace-nowrap text-ink-soft" title="The hotel is counted under lodging in Bookings and Budget">
+                            Included in stay
+                          </span>
+                        ) : (
+                          <Price usd={slot.cost} free className="text-ink-soft" />
+                        )}
                       </div>
                       {slot.location && (
                         <ExternalLink href={mapsUrl(slot.location, day.city ?? destination)} className="mt-1 text-xs text-ink-muted">

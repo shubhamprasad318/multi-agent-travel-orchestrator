@@ -29,7 +29,7 @@ export default function Footer() {
       </div>
       <div className="container flex flex-col sm:flex-row justify-between gap-2 border-t border-rule py-6 text-xs text-ink-muted">
         <p>&copy; {new Date().getFullYear()} {BRAND.name}</p>
-        <p>Photography via Unsplash · Maps © OpenStreetMap contributors</p>
+        <p>Photography via Unsplash · Maps © Esri, © OpenStreetMap contributors</p>
       </div>
     </footer>
   );

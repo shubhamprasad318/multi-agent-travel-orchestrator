@@ -52,7 +52,9 @@ SYSTEM = SYSTEM_BASE + (
     "the best-weather days and give an indoor backup for rainy days. Day 1 and the last day "
     "are lighter because of arrival/departure. Every cost is the total for the whole group in "
     "USD; slot costs cover tickets and local transport, meal costs cover food. Keep the sum of "
-    "all slot and meal costs within the on-the-ground budget. Use empty weather_note when "
+    "all slot and meal costs within the on-the-ground budget by choosing cheaper options, never "
+    "by understating prices: every cost is a realistic price, and a meal costs 0 only when it is "
+    "genuinely included (such as a hotel breakfast). Use empty weather_note when "
     "there is nothing to say. Give the latitude and longitude of each slot's location as "
     "accurately as you can. On a multi-city trip, each day is spent in the city given for it: "
     "on a travel day, plan the transfer in the morning and only light plans in the new city."
@@ -63,6 +65,24 @@ SLOTS_PER_PACE = {
     "moderate": "2-3 activities per day",
     "fast": "3 packed activity slots per day",
 }
+
+
+# Below this per person per day, the budget can't cover food; say so rather than
+# asking the model to fit costs into it (it would price meals at 0).
+MIN_GROUND_PER_PERSON_DAY = 5.0
+
+
+def _ground_budget_line(on_ground: float, request: TravelRequest) -> str:
+    if on_ground < MIN_GROUND_PER_PERSON_DAY * request.travelers * request.days:
+        return (
+            "On-the-ground budget: little or nothing is left after flights and lodging. Favour free "
+            "and low-cost activities and cheap local food, but still give realistic prices for "
+            "everything (the plan will be shown as over budget)."
+        )
+    return (
+        f"On-the-ground budget (activities + food + local transport, whole group): ${on_ground:,.0f} "
+        f"(about ${on_ground / request.days:,.0f} per day)"
+    )
 
 
 def _weather_lines(weather: WeatherResult | None) -> str:
@@ -153,8 +173,7 @@ async def run(
         f"Interests: {user_input(', '.join(request.preferences.interests) or 'general sightseeing')}\n"
         f"Pace: {SLOTS_PER_PACE[request.preferences.pace]}\n"
         f"Accommodation base: {accommodation_text(bookings)}\n"
-        f"On-the-ground budget (activities + food + local transport, whole group): ${on_ground:,.0f} "
-        f"(about ${on_ground / request.days:,.0f} per day)\n"
+        f"{_ground_budget_line(on_ground, request)}\n"
         f"Neighbourhoods: {', '.join(n.name for n in research.neighborhoods) if research else '(unknown)'}\n\n"
         f"Weather by date:\n{_weather_lines(weather)}\n\n"
         f"Curated activities:\n{_activity_lines(activities)}"
