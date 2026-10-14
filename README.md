@@ -10,6 +10,10 @@ Runs on a single free **Google AI Studio** key.
 ![LangGraph](https://img.shields.io/badge/LangGraph-1.x-orange)
 ![Gemini](https://img.shields.io/badge/Gemini-3.x-4285F4)
 
+![The six agents planning a trip: research and weather in parallel, then activities and bookings, then the itinerary and the validator](docs/agent-flow.gif)
+
+*How a plan is made: research and weather run in parallel, then activities and bookings, then the planner writes the itinerary and the editor (validator) scores it, sending it back for a second draft if it scores below 60.*
+
 ---
 
 ## Features
