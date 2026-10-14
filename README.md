@@ -6,7 +6,7 @@ Runs on a single free **Google AI Studio** key.
 
 ![Python](https://img.shields.io/badge/Python-3.11+-blue)
 ![Next.js](https://img.shields.io/badge/Next.js-15.5-black)
-![FastAPI](https://img.shields.io/badge/FastAPI-0.115+-green)
+![FastAPI](https://img.shields.io/badge/FastAPI-0.142+-green)
 ![LangGraph](https://img.shields.io/badge/LangGraph-1.x-orange)
 ![Gemini](https://img.shields.io/badge/Gemini-3.x-4285F4)
 
@@ -16,7 +16,7 @@ Runs on a single free **Google AI Studio** key.
 
 - **Live agent graph**: while planning, the UI draws the actual LangGraph workflow and lights up each agent as it starts and finishes (streamed over Server-Sent Events), with a running timeline that makes the parallelism visible.
 - **Behind the scenes**: every plan keeps a trace of each agent run (duration, tokens, Gemini calls, web sources, and a one-line outcome such as *"Score 54/100: below 60, sending back for revision"*), plus the parallel speed-up.
-- **Interactive map**: numbered, colour-coded stops for each day with route lines (Leaflet + OpenStreetMap). Implausible coordinates are filtered out in code.
+- **Interactive map**: numbered, colour-coded stops for each day with route lines (Leaflet + Esri basemap, free and keyless). Implausible coordinates are filtered out in code.
 - **Grounded research**: agents use Gemini's built-in Google Search grounding, returning structured JSON *and* the sources they used, in a single call.
 - **Parallel agent graph**: weather runs alongside research; activities and bookings run in parallel; the itinerary waits for all three.
 - **Measured quality**: an evaluation harness runs 16 fixed trips through the real pipeline with deterministic checks, an LLM judge and a revision-loop ablation; the **/evals** dashboard tracks every run over time.
@@ -39,6 +39,7 @@ Runs on a single free **Google AI Studio** key.
 - **Shareable plans**: every plan has a URL (`/results?id=…`) backed by the API.
 - **Honest data**: weather is labelled *forecast* vs *typical conditions*; flight and hotel prices are labelled as estimates and link to Google Flights / Booking.com with your dates pre-filled for live prices. With a free Travelpayouts token, real **recent fares** (what other travellers paid in the last few days, via Aviasales) are shown next to the estimates.
 - **Export**: add the itinerary to your calendar (`.ics`) or print / save as PDF (all sections).
+- **Realistic logistics**: the validator checks every day in code: two stops that are 14 km apart can't be 30 minutes apart, and every full day needs breakfast, lunch and dinner (none before you arrive or after you leave). Problems cost points and are sent back to the planner.
 - **Graceful degradation**: if one agent fails, the rest of the plan is still returned and the UI says which part is missing.
 
 ## Architecture
@@ -67,7 +68,7 @@ Runs on a single free **Google AI Studio** key.
 | Activity | ✅ | 12–18 named activities across categories with cost/duration |
 | Booking | ✅ | Flight and hotel estimates; code adds group totals and search links |
 | Itinerary | – | Day-by-day plan within the budget left after flights and lodging |
-| Validator | – | Category scores; code adds budget score, weighting and status |
+| Validator | – | Category scores; code adds budget score, travel-time and meal checks, weighting and status |
 | Day re-planner | ✅ | On request, after a plan exists: one day rewritten for a change (rain, a closure, tired legs), other days untouched |
 
 ## Quick start
